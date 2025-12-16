@@ -1,0 +1,6 @@
+[submodule "deps/coqutil"]
+	path = deps/coqutil
+	url = git@github.com:mit-plv/coqutil.git
+[submodule "deps/coq-stdlib-edits"]
+	path = deps/coq-stdlib-edits
+	url = git@github.com:DIJamner/coq-stdlib-edits.git
