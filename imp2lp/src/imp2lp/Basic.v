@@ -1,4 +1,4 @@
-From Stdlib Require Import String ZArith List Bool.
+From Stdlib Require Import String ZArith List Bool Ascii.
 Require Import imp2lp.Value. (* import for the record_sort function *)
 
 Import ListNotations.
@@ -224,6 +224,9 @@ Section WithMap.
         out_attr_tys)
   end.
 
+  Definition newline := String "010"%char EmptyString.
+  Definition double_quote := String "034"%char EmptyString.
+
   Fixpoint concat_strings_with (delim : string) (l : list string) : string :=
     match l with
     | [] => ""
@@ -241,7 +244,7 @@ Section WithMap.
     | fun_dexpr fn_Plus [e1; e2] => print_dexpr e1 ++ " + " ++ print_dexpr e2
     | fun_dexpr (fn_BLit b) [] => if b then "1" else "0"
     | fun_dexpr (fn_ZLit n) [] => of_Z n
-    | fun_dexpr (fn_SLit s) [] => "'" ++ s ++ "'"
+    | fun_dexpr (fn_SLit s) [] => double_quote ++ s ++ double_quote
     | _ => "error"
     end.
 
@@ -290,8 +293,8 @@ Section WithMap.
   Definition print_compiled_query (out : rel) (next_rel : nat) (e : expr) : string :=
     let '(rls, _, sig) := lower_expr out next_rel e in
     print_decl {| decl_R := out; decl_sig := sig |} ++
-      "\n.output " ++ print_rel out ++ "\n" ++
-      concat_strings_with "\n" (map print_stmt rls).
+      newline ++ ".output " ++ print_rel out ++ newline ++
+      concat_strings_with newline (map print_stmt rls).
 
   Local Open Scope string_scope.
 

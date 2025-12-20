@@ -3,6 +3,38 @@ Require Import coqutil.Map.Interface.
 
 Import ListNotations.
 
+Ltac destruct_match_hyp :=
+  lazymatch goal with
+    H: context[match ?x with _ => _ end] |- _ =>
+      let E := fresh "E" in
+      destruct x eqn:E end.
+
+Ltac do_injection :=
+  lazymatch goal with
+    H: ?c _ = ?c _ |- _ => injection H; intros; subst
+  end.
+
+Ltac clear_refl := lazymatch goal with H: ?x = ?x |- _ => clear H end.
+
+Ltac invert_Forall2 :=
+  lazymatch goal with
+  | H: Forall2 _ (_ :: _) _ |- _ => inversion H; subst; clear H
+  | H: Forall2 _ _ (_ :: _) |- _ => inversion H; subst; clear H
+  | H: Forall2 _ _ _ |- _ => inversion H; subst; clear H
+  end.
+
+Ltac rewrite_l_to_r :=
+  lazymatch goal with
+  | H: ?x = _, H': context[?x] |- _ => rewrite H in H'
+  | H: ?x = _ |- context[?x] => rewrite H
+  end.
+
+Ltac rewrite_asm :=
+  lazymatch goal with
+    H: ?x = _ |- context[?x] => rewrite H
+  end.
+
+
 (* Values from evaluating Datalog terms *)
 Inductive obj : Set :=
   Bobj : bool -> obj | Zobj : Z -> obj | Sobj : string -> obj.
@@ -56,11 +88,57 @@ Section WithContext.
   | interp_var_dexpr x v :
     map.get ctx x = Some v ->
     interp_dexpr ctx (var_dexpr x) v
-  | interp_fun_dexpr f args args' x :
+  | interp_fun_dexpr f args args' v :
     Forall2 (interp_dexpr ctx) args args' ->
-    interp_fun f args' = Some x ->
-    interp_dexpr ctx (fun_dexpr f args) x.
+    interp_fun f args' = Some v ->
+    interp_dexpr ctx (fun_dexpr f args) v.
   Set Elimination Schemes.
+
+  Section interp_dexpr_ind.
+    Context (ctx : context).
+    Context (P : dexpr -> obj -> Prop).
+    Hypothesis (f_var : forall x v, map.get ctx x = Some v -> P (var_dexpr x) v)
+      (f_fun : forall f args args' v, Forall2 (interp_dexpr ctx) args args' ->
+                                      interp_fun f args' = Some v ->
+                                      Forall2 P args args' ->
+                                      P (fun_dexpr f args) v).
+
+    Section __.
+      Context (interp_dexpr_ind : forall e v, interp_dexpr ctx e v -> P e v).
+
+      Fixpoint interp_dexpr_args_ind (args : list dexpr) (args' : list obj) (H : Forall2 (interp_dexpr ctx) args args') : Forall2 P args args' :=
+        match H with
+        | Forall2_nil _ => Forall2_nil _
+        | Forall2_cons arg arg' Harg Hargs =>
+            Forall2_cons arg arg' (interp_dexpr_ind arg arg' Harg) (interp_dexpr_args_ind _ _ Hargs)
+        end.
+    End __.
+
+    Fixpoint interp_dexpr_ind e v (H : interp_dexpr ctx e v) : P e v :=
+      match H with
+      | interp_var_dexpr _ x v Hvar => f_var x v Hvar
+      | interp_fun_dexpr _ f args args' v Hargs Hf =>
+          f_fun f args args' v Hargs Hf
+            (interp_dexpr_args_ind interp_dexpr_ind args args' Hargs)
+      end.
+  End interp_dexpr_ind.
+
+  Lemma interp_dexpr_unique : forall ctx e v v',
+      interp_dexpr ctx e v ->
+      interp_dexpr ctx e v' ->
+      v = v'.
+  Proof.
+    intros * H. generalize dependent v'.
+    induction H; intros * H'; inversion H'; subst.
+    1: congruence.
+    assert (args' = args'0).
+    { clear H0 H6 H'. generalize dependent args'0.
+      induction H1; subst; auto; intros;
+        inversion H4; subst; auto.
+      apply H0 in H5; subst.
+      f_equal. clear H4. invert_Forall2; auto. }
+    congruence.
+  Qed.
 
   Inductive interp_prop (ctx : context) : dprop -> Prop :=
   | interp_lt_prop e1 e2 n1 n2 :
@@ -119,11 +197,13 @@ End WithContext.
 (* Datalog base types *)
 Variant dtype := DBool | DNumber | DSymbol.
 
+Record decl := { decl_R : rel; decl_sig : list (string * dtype) }.
+
 Require Import imp2lp.SrcLang imp2lp.Value.
 Require Import coqutil.Datatypes.Result.
 
 Section WithVarenv.
-  Context {varenv : map.map (string * string) (var * dtype)} {varenv_ok : map.ok varenv}.
+  Context {varenv : map.map (string * string) var} {varenv_ok : map.ok varenv}.
 
   Fixpoint lower_aexpr (m : varenv) (e : aexpr) : dexpr :=
     match e with
@@ -136,7 +216,7 @@ Section WithVarenv.
     | AStringConcat e1 e2 => fun_dexpr fn_StringConcat [lower_aexpr m e1; lower_aexpr m e2]
     | AStringLength e => fun_dexpr fn_StringLength [lower_aexpr m e]
     | AAccess x attr => match map.get m (x, attr) with
-                        | Some (v, _) => var_dexpr v
+                        | Some v => var_dexpr v
                         | None => var_dexpr (DVar 0) (* unreachable *)
                         end
     end.
@@ -155,6 +235,114 @@ Section WithVarenv.
     | _ => DBool (* unused *)
     end.
 
+  Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
+
+  Definition get_aexpr_type (Genv : tenv) (e : aexpr) : type :=
+    match e with
+    | ABool _ | ANot _ | AAnd _ _ => TBool
+    | AInt _ | APlus _ _ | AStringLength _ => TInt
+    | AString _ | AStringConcat _ _ => TString
+    | AAccess x attr => match map.get Genv x with
+                        | Some (TRecord tl) => match access_record tl attr with
+                                               | Success t => t
+                                               | _ => TBool (* unused case *)
+                                               end
+                        | _ => TBool (* unused cases *)
+                        end
+    end.
+
+  Definition lower_rexpr (Genv : tenv) (m : varenv) (e : rexpr) : list dexpr * list (string * type) :=
+    match e with
+      RRecord l =>
+        (List.map (fun '(_, a) => lower_aexpr m a) (record_sort l),
+          List.map (fun '(s, a) => (s, get_aexpr_type Genv a)) (record_sort l))
+    end.
+
+  Fixpoint mk_vars (name : nat) (len : nat) : list var :=
+    match len with
+    | O => []
+    | S l => DVar name :: (mk_vars (S name) l)
+    end.
+
+  Fixpoint put_attr_bindings (m : varenv) (x : string) (attrs : list string) (vars : list var) : varenv :=
+    match attrs, vars with
+    | [], _ | _, [] => m
+    | attr :: attrs, v :: vars =>
+        put_attr_bindings (map.put m (x, attr) v) x attrs vars
+    end.
+
+  Definition lower_rec_type : list (string * type) -> list (string * dtype) :=
+    List.map (fun '(s, t) => (s, lower_type t)).
+
+  Fixpoint lower_expr (out : rel) (next_rel : nat) (Genv : tenv) (e : expr) : list decl * list rule * nat * list (string * type) :=
+  match e with
+  | EEmptySet l => ([], [], next_rel, l)
+  | ESetInsert r s =>
+      let '(r', _) := lower_rexpr Genv map.empty r in
+      let '(dcls, rls, next_rel', attr_tys) := lower_expr out next_rel Genv s in
+      let vs := List.map var_dexpr (mk_vars 0 (List.length attr_tys)) in
+      ( dcls,
+        rls ++
+         [ {| rule_head := {| fact_R := out; fact_args := r' |};
+                 rule_body := [];
+             rule_prop := [] |} ],
+        next_rel',
+        attr_tys)
+  | EFilter s x p =>
+      (* out vs :- aux vs, p *)
+      let aux := nat_rel next_rel in
+      let '(dcls, rls, next_rel', attr_tys) := lower_expr aux (S next_rel) Genv s in
+      let vars := mk_vars 0 (List.length attr_tys) in
+      let p' := List.map (lower_pexpr (put_attr_bindings map.empty x (List.map fst attr_tys) vars)) p in
+      let vs := List.map var_dexpr vars in
+      (dcls ++
+        [ {| decl_R := aux; decl_sig := lower_rec_type attr_tys |} ],
+        rls ++
+         [ {| rule_head := {| fact_R := out; fact_args := vs |};
+             rule_body := [ {| fact_R := aux; fact_args := vs |} ];
+             rule_prop := p' |}],
+        next_rel',
+        attr_tys)
+  | EJoin s1 s2 x1 x2 p r =>
+      (* out (lower_rexpr m r) :- aux1 vs1, aux2 vs2, lower_aexpr m p *)
+      let aux1 := nat_rel next_rel in
+      let '(dcls1, rls1, next_rel1, attr_tys1) := lower_expr aux1 (S next_rel) Genv s1 in
+      let aux2 := nat_rel next_rel1 in
+      let '(dcls2, rls2, next_rel2, attr_tys2) := lower_expr aux2 (S next_rel1) Genv s2 in
+      let vars1 := mk_vars 0 (List.length attr_tys1) in
+      let vars2 := mk_vars (List.length attr_tys1) (List.length attr_tys2) in
+      let m := put_attr_bindings (put_attr_bindings map.empty x1 (List.map fst attr_tys1) vars1) x2 (List.map fst attr_tys2) vars2 in
+      let vs1 := List.map var_dexpr vars1 in
+      let vs2 := List.map var_dexpr vars2 in
+      let p' := List.map (lower_pexpr m) p in
+      let '(r', attr_tys) := lower_rexpr (map.put (map.put Genv x1 (TRecord attr_tys1)) x2 (TRecord attr_tys2)) m r in
+      (dcls1 ++ dcls2 ++
+         [ {| decl_R := aux1; decl_sig := lower_rec_type attr_tys1 |};
+           {| decl_R := aux2; decl_sig := lower_rec_type attr_tys2 |} ],
+        [ {| rule_head := {| fact_R := out; fact_args := r' |} ;
+            rule_body :=
+              [ {| fact_R := aux1; fact_args := vs1 |};
+                {| fact_R := aux2; fact_args := vs2 |} ];
+           rule_prop := p' |} ],
+        next_rel2,
+        attr_tys)
+  | EProj s x r =>
+      (* out rs :- aux vs *)
+      let aux := nat_rel next_rel in
+      let '(dcls, rls, next_rel', attr_tys) := lower_expr aux (S next_rel) Genv s in
+      let vars := mk_vars 0 (List.length attr_tys) in
+      let '(r', out_attr_tys) := lower_rexpr Genv (put_attr_bindings map.empty x (List.map fst attr_tys) vars) r in
+      let vs := List.map var_dexpr vars in
+      (dcls ++
+         [ {| decl_R := aux; decl_sig := lower_rec_type attr_tys |} ],
+        rls ++
+         [ {| rule_head := {| fact_R := out; fact_args := r' |};
+             rule_body := [ {| fact_R := aux; fact_args := vs |} ];
+             rule_prop := [] |}],
+        next_rel',
+        out_attr_tys)
+  end.
+
   Definition lower_atomic_value (v : value) : obj :=
     match v with
     | VInt n => Zobj n
@@ -168,7 +356,7 @@ End WithVarenv.
 Require Import coqutil.Tactics.case_match.
 
 Section WithMaps.
-  Context {varenv : map.map (string * string) (var * dtype)} {varenv_ok : map.ok varenv}.
+  Context {varenv : map.map (string * string) var} {varenv_ok : map.ok varenv}.
   (* ??? for concrete map implementation of varenv, see pyrosome utils poslistmap trimap*)
   Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
   Context {locals: map.map string value} {locals_ok: map.ok locals}.
@@ -189,7 +377,7 @@ Section WithMaps.
         access_record tl attr = Success t ->
         access_record vl attr = Success v ->
         match map.get m (x, attr) with
-        | Some (x', t') => map.get ctx x' = Some (lower_atomic_value v) /\ t' = lower_type t
+        | Some x' => map.get ctx x' = Some (lower_atomic_value v)
         | _ => False
         end.
 
@@ -198,29 +386,6 @@ Section WithMaps.
       IH: _ -> ?x -> type_of_value _ _, H: ?x |- _ =>
         let H' := fresh "H'" in
         apply IH in H as H'; clear IH; auto; inversion H'; subst
-    end.
-
-  Ltac destruct_match_hyp :=
-    lazymatch goal with
-      H: context[match ?x with _ => _ end] |- _ =>
-        let E := fresh "E" in
-        destruct x eqn:E end.
-
-  Ltac do_injection :=
-    lazymatch goal with
-      H: ?c _ = ?c _ |- _ => injection H; intros; subst
-    end.
-
-  Ltac invert_Forall2 :=
-    lazymatch goal with
-    | H: Forall2 _ (_ :: _) _ |- _ => inversion H; subst; clear H
-    | H: Forall2 _ _ (_ :: _) |- _ => inversion H; subst; clear H
-    | H: Forall2 _ _ _ |- _ => inversion H; subst; clear H
-    end.
-
-  Ltac rewrite_asm :=
-    lazymatch goal with
-      H: ?x = _ |- context[?x] => rewrite H
     end.
 
   Lemma Forall2_access_record : forall A B vl tl attr t (P : A -> B -> Prop),
@@ -249,7 +414,10 @@ Section WithMaps.
   Proof.
     induction 1; intros; cbn; try constructor;
       repeat apply_aexpr_type_sound_IH; try constructor.
-    apply H2 in H. case_match; intuition idtac.
+    lazymatch goal with
+      H: locals_wf ?Genv _, H': map.get ?Genv _ = _ |- _ =>
+        apply H in H'
+    end. case_match; intuition idtac.
     inversion H.
     lazymatch goal with
       H: Forall2 (fun _ _ => type_of_value _ _) _ _ |- _ =>
@@ -261,6 +429,12 @@ Section WithMaps.
   Ltac apply_aexpr_type_sound :=
     lazymatch goal with
       H: type_of_aexpr _ ?e _ |- _ =>
+        eapply aexpr_type_sound in H
+    end.
+
+  Ltac apply_aexpr_type_sound' e :=
+    lazymatch goal with
+      H: type_of_aexpr _ e _ |- _ =>
         eapply aexpr_type_sound in H
     end.
 
@@ -304,17 +478,184 @@ Section WithMaps.
         eapply H1 in H2
     end; eauto.
     case_match; intuition idtac.
-    case_match. constructor; intuition fail.
+    constructor; intuition fail.
   Qed.
-(*
-    Lemma lower_expr_sound : forall Genv env e t m,
-        lower_expr out next_rel e = (prog, next_rel', tl') ->
-        out < next_rel ->
-        type_of_expr Genv e tl ->
+
+  Lemma type_of_aexpr_atomic : forall Genv e t,
+      type_of_aexpr Genv e t ->
+      is_atomic_type t.
+  Proof.
+    induction 1; cbn; auto.
+  Qed.
+
+  Lemma lower_atomic_value_inj : forall t v1 v2,
+    is_atomic_type t ->
+    type_of_value v1 t -> type_of_value v2 t ->
+    lower_atomic_value v1 = lower_atomic_value v2 ->
+    v1 = v2.
+  Proof.
+    intros; destruct t; cbn in *; intuition idtac.
+    all: repeat invert_type_of_value; cbn in *; congruence.
+  Qed.
+
+  Ltac apply_interp_dexpr_unique :=
+    lazymatch goal with
+      H1: interp_dexpr _ ?e _,
+        H2: interp_dexpr _ ?e _ |- _ =>
+        pose proof (interp_dexpr_unique _ _ _ _ H1 H2);
+        clear H1 H2
+    end.
+
+  Ltac apply_value_eqb_eq :=
+    lazymatch goal with
+      H: value_eqb _ _ = _ |- _ =>
+        apply value_eqb_eq in H; subst
+    end.
+
+  Lemma lower_pexpr_sound : forall Genv env e m ctx,
+      well_typed_pexpr Genv e ->
+      tenv_wf Genv ->
+      locals_wf Genv env ->
+      maps_wf Genv env m ctx ->
+      interp_prop ctx (lower_pexpr m e) <-> interp_pexpr env e = true.
+  Proof.
+    induction 1; cbn; intros.
+    1:{ split; intro H_asm.
+        1:{ inversion H_asm; subst.
+            repeat lazymatch goal with
+                     H: type_of_aexpr _ ?e _ |- _ =>
+                       let H' := fresh "H'" in
+                       eapply lower_aexpr_sound in H as H'; eauto;
+                       apply_aexpr_type_sound' e; eauto
+                   end.
+            repeat invert_type_of_value.
+            repeat lazymatch goal with
+                     H: _ = interp_aexpr _ _ |- _ =>
+                       rewrite <- H in *; clear H
+                   end; cbn in *.
+            repeat apply_interp_dexpr_unique.
+            repeat (do_injection; clear_refl).
+            rewrite Z.ltb_lt. assumption. }
+        1:{ repeat (destruct_match_hyp; try discriminate).
+            repeat lazymatch goal with
+                     H: type_of_aexpr _ ?e _ |- _ =>
+                       let H' := fresh "H'" in
+                       eapply lower_aexpr_sound in H as H'; eauto;
+                       clear H
+                   end.
+            repeat rewrite_l_to_r; cbn in *.
+            econstructor; eauto.
+            apply Z.ltb_lt; assumption. } }
+    1:{ split; intro H_asm.
+        1:{ inversion H_asm; subst.
+            repeat lazymatch goal with
+                     H: type_of_aexpr _ ?e _ |- _ =>
+                       let H' := fresh "H'" in
+                       let H'' := fresh "H''" in
+                       eapply lower_aexpr_sound in H as H'; eauto;
+                       apply type_of_aexpr_atomic in H as H'';
+                       apply_aexpr_type_sound' e; eauto
+                   end.
+            repeat apply_interp_dexpr_unique. subst.
+            lazymatch goal with
+              H: lower_atomic_value _ = _ |- _ =>
+                eapply lower_atomic_value_inj in H
+            end; eauto.
+            rewrite_asm. apply value_eqb_refl. }
+        1:{ repeat (destruct_match_hyp; try discriminate).
+            repeat lazymatch goal with
+                     H: type_of_aexpr _ ?e _ |- _ =>
+                       let H' := fresh "H'" in
+                       eapply lower_aexpr_sound in H as H'; eauto;
+                       clear H
+                   end.
+            apply_value_eqb_eq.
+            repeat rewrite_l_to_r; cbn in *.
+            econstructor; eauto. } }
+  Qed.
+
+  Ltac invert_pair :=
+    lazymatch goal with
+      H: _ = (_, _) |- _ => inversion H; subst; clear H
+    end.
+
+  Ltac destruct_exists :=
+    lazymatch goal with
+      H: exists _, _ |- _ => destruct H end.
+
+  Lemma lower_rexpr_sound : forall Genv env m ctx e l attr_tys t vl,
+      type_of_rexpr Genv e t ->
+      lower_rexpr Genv m e = (l, attr_tys) ->
+      interp_rexpr env e = vl ->
+      tenv_wf Genv ->
+      locals_wf Genv env ->
+      maps_wf Genv env m ctx ->
+      Forall2 (fun e' v => interp_dexpr ctx e' (lower_atomic_value (snd v))) l vl.
+  Proof.
+    intros * H. inversion H; subst; cbn.
+    intros. invert_pair. remember (record_sort el) as l.
+    lazymatch goal with
+      H: Forall2 _ _ _ |- _ =>
+        eapply Permutation.Permutation_Forall2 in H
+    end; [ | apply Permuted_record_sort ].
+    destruct_exists; intuition idtac.
+    rewrite <- Heql in *. clear Heql H3.
+    generalize dependent x.
+    induction l; cbn; constructor; auto;
+      invert_Forall2; eauto.
+    case_match; cbn.
+    eapply lower_aexpr_sound; eauto.
+  Qed.
+
+  Definition rel_lt (r1 r2 : rel) : Prop :=
+    match r1, r2 with
+      nat_rel n1, nat_rel n2 =>
+        Nat.lt n1 n2
+    end.
+
+  Definition lower_rec_value (v : value) : list obj :=
+    match v with
+    | VRecord l => map (fun p => lower_atomic_value (snd p)) l
+    | _ => []
+    end.
+
+  Lemma expr_type_sound : forall Genv env e t,
+      type_of_expr Genv e t ->
+      locals_wf Genv env ->
+      match interp_expr env e with
+      | VSet s => Forall (fun v => type_of_value v t) s
+      | _ => False
+      end.
+  Proof.
+    induction 1; cbn; intros.
+    1: constructor.
+    1:{ apply IHtype_of_expr in H1.
+        destruct_match_hyp; intuition idtac.
+        inversion H; subst. admit. }
+    Admitted.
+
+  Lemma lower_expr_sound' : forall Genv env e t,
+      type_of_expr Genv e t ->
+      (* rel_lt out (nat_rel next_rel) -> *)
+      forall s out next_rel dcls prog next_rel' tl',
+        lower_expr out next_rel Genv e = (dcls, prog, next_rel', tl') ->
         interp_expr env e = VSet s ->
-        tl' = lower_record_type tl /\
-          forall vl, In vl s <-> prog_impl_fact prog out (lower_record vl)
-    doesn't touch other r.
-*)
+        locals_wf Genv env ->
+        (*  rel_ltb next_rel all_rels_in_prog
+        rel_lt all_rels_in_prog next_rel' *)
+        forall rv, In rv s <-> prog_impl_fact prog (out, lower_rec_value rv).
+  Proof.
+    induction 1; cbn; intros.
+    1:{ repeat invert_pair; do_injection; intuition idtac.
+        1: lazymatch goal with
+             H: In _ nil |- _ => apply in_nil in H
+           end; intuition fail.
+        1: inversion H0; subst;
+        rewrite Exists_nil in *; intuition fail. }
+    1:{ eapply expr_type_sound in H0; eauto.
+        destruct_match_hyp; intuition idtac.
+        1:{ econstructor.
+          (*  split cases between rv = interp_rexpr env r and In rv l. *) all: admit. }
+        Admitted.
 
 End WithMaps.

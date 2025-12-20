@@ -1,4 +1,4 @@
-From Stdlib Require Import String ZArith List Bool Sorted.
+From Stdlib Require Import String ZArith List Bool Sorted Permutation.
 
 Import ListNotations.
 Open Scope list_scope.
@@ -175,6 +175,12 @@ Section WithMap.
     Definition tenv_wf :=
       forall x t, map.get Genv x = Some t -> type_wf t.
 
+    Definition is_atomic_type (t : type) : Prop :=
+      match t with
+      | TInt | TBool | TString => True
+      | _ => False
+      end.
+
     Inductive type_of_aexpr : aexpr -> type -> Prop :=
     | TABool b : type_of_aexpr (ABool b) TBool
     | TAInt n : type_of_aexpr (AInt n) TInt
@@ -193,8 +199,9 @@ Section WithMap.
     | TAStringLength e : type_of_aexpr e TString ->
                          type_of_aexpr (AStringLength e) TInt
     | TAAccess x attr l t : map.get Genv x = Some (TRecord l) ->
-                        access_record l attr = Success t ->
-                        type_of_aexpr (AAccess x attr) t.
+                            access_record l attr = Success t ->
+                            is_atomic_type t ->
+                            type_of_aexpr (AAccess x attr) t.
 
     Inductive well_typed_pexpr : pexpr -> Prop :=
     | TPLt e1 e2 : type_of_aexpr e1 TInt ->
@@ -204,9 +211,71 @@ Section WithMap.
                      type_of_aexpr e2 t ->
                      well_typed_pexpr (PEq e1 e2).
 
-    Inductive type_of_expr : expr -> Prop :=
-    | TEEmptySet tl : type_wf (TRecord tl) ->
-                      type_of_expr (EEmptySet tl).
-    (* ??? can avoid "set type" if expr can only be evaluated to sets of records *)
-    End WithGenv.
+    Inductive type_of_rexpr : rexpr -> type -> Prop :=
+    | TRRecord el tl : Permutation (map fst el) (map fst tl) ->
+                       type_wf (TRecord tl) ->
+                       Forall2 (fun ep tp => type_of_aexpr (snd ep) (snd tp)) el tl ->
+                       type_of_rexpr (RRecord el) (TRecord tl).
+  End WithGenv.
+
+  Inductive type_of_expr (Genv : tenv) : expr -> type -> Prop :=
+  | TEEmptySet tl : type_wf (TRecord tl) ->
+                    type_of_expr Genv (EEmptySet tl) (TRecord tl)
+  | TESetInsert r e t : type_of_rexpr Genv r t ->
+                        type_of_expr Genv e t ->
+                        type_of_expr Genv (ESetInsert r e) t
+  | TEFilter e x ps t : type_of_expr Genv e t ->
+                        Forall (well_typed_pexpr (map.put Genv x t)) ps ->
+                        type_of_expr Genv (EFilter e x ps) t
+  | TEJoin e1 e2 x1 x2 ps r t1 t2 t :
+    type_of_expr Genv e1 t1 ->
+    type_of_expr Genv e2 t2 ->
+    Forall (well_typed_pexpr (map.put (map.put Genv x1 t1) x2 t2)) ps ->
+    type_of_rexpr (map.put (map.put Genv x1 t1) x2 t2) r t ->
+    type_of_expr Genv (EJoin e1 e2 x1 x2 ps r) t
+  | TEProj e x r t1 t2 : type_of_expr Genv e t1 ->
+                         type_of_rexpr (map.put Genv x t1) r t2 ->
+                         type_of_expr Genv (EProj e x r) t2.
+
+  Import ResultMonadNotations.
+  Open Scope string_scope.
+  Fixpoint type_check_aexpr (Genv : tenv) (e : aexpr) : result type :=
+    match e with
+    | ABool _ => Success TBool
+    | AInt _ => Success TInt
+    | AString _ => Success TString
+    | ANot e => t <- type_check_aexpr Genv e;;
+                if type_beq t TBool
+                then Success TBool
+                else error:(e "has type" t "but expected a Boolean")
+    | AAnd e1 e2 => t1 <- type_check_aexpr Genv e1;;
+                    if type_beq t1 TBool
+                    then t2 <- type_check_aexpr Genv e2;;
+                         if type_beq t2 TBool
+                         then Success TBool
+                         else error:(e2 "has type" t2 "but expected a Boolean")
+                    else error:(e1 "has type" t1 "but expected a Boolean")
+    | APlus e1 e2 => t1 <- type_check_aexpr Genv e1;;
+                     if type_beq t1 TInt
+                     then t2 <- type_check_aexpr Genv e2;;
+                          if type_beq t2 TInt
+                          then Success TInt
+                          else error:(e2 "has type" t2 "but expected an integer")
+                     else error:(e1 "has type" t1 "but expected an integer")
+    | AStringLength e => t <- type_check_aexpr Genv e;;
+                         if type_beq t TString
+                         then Success TInt
+                         else error:(e "has type" t "but expected a string")
+    | AStringConcat e1 e2 => t1 <- type_check_aexpr Genv e1;;
+                             if type_beq t1 TString
+                             then t2 <- type_check_aexpr Genv e2;;
+                                  if type_beq t2 TString
+                                  then Success TString
+                                  else error:(e2 "has type" t2 "but expected a string")
+                             else error:(e1 "has type" t1 "but expected a string")
+    | AAccess x attr => match map.get Genv x with
+                        | Some (TRecord l) => access_record l x
+                        | _ => error:("Variable" x "does not have a record type")
+                        end
+    end.
 End WithMap.

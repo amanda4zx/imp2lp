@@ -267,6 +267,11 @@ Section WithWord.
     intros; subst; apply value_compare_refl.
   Qed.
 
+  Lemma value_eqb_refl : forall (v : value), value_eqb v v = true.
+  Proof.
+    unfold value_eqb. intro; rewrite value_compare_refl; auto.
+  Qed.
+
   Lemma value_eqb_sym : forall x y, value_eqb x y = value_eqb y x.
   Proof.
     intros. unfold value_eqb. rewrite value_compare_antisym. destruct (value_compare y x); auto.
