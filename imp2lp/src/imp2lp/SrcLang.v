@@ -130,11 +130,11 @@ Section WithMap.
                   else if value_eqb v v' then l
                        else v' :: set_insert v l'
     end.
-  Fixpoint interp_expr (env : locals) (e : expr) : value :=
+  Fixpoint interp_expr (e : expr) : value :=
     match e with
     | EEmptySet _ => VSet []
-    | ESetInsert r e => match interp_expr env e with
-                        | VSet s => VSet (set_insert (VRecord (interp_rexpr env r)) s)
+    | ESetInsert r e => match interp_expr e with
+                        | VSet s => VSet (set_insert (VRecord (interp_rexpr map.empty r)) s)
                         | _ => default_value
                         end
    (* | EEmptyList _ => VList []
@@ -142,13 +142,13 @@ Section WithMap.
                          | VList l => VList (VRecord (interp_rexpr env r) :: l)
                          | _ => default_value
                          end *)
-    | EFilter e x ps => match interp_expr env e with
+    | EFilter e x ps => match interp_expr e with
                         | VSet s => VSet (filter
-                                            (fun r => forallb (fun p => interp_pexpr (map.put env x r) p) ps)
+                                            (fun r => forallb (fun p => interp_pexpr (map.put map.empty x r) p) ps)
                                             s)
                         | _ => default_value
                         end
-    | EJoin e1 e2 x1 x2 ps r => match interp_expr env e1, interp_expr env e2 with
+    | EJoin e1 e2 x1 x2 ps r => match interp_expr e1, interp_expr e2 with
                                 | VSet s1, VSet s2 =>
                                     VSet
                                       (value_sort
@@ -156,14 +156,14 @@ Section WithMap.
                                             (fun r1 =>
                                                flat_map
                                                  (fun r2 =>
-                                                    let env' := map.put (map.put env x1 r1) x2 r2 in
+                                                    let env' := map.put (map.put map.empty x1 r1) x2 r2 in
                                                     if forallb (fun p => interp_pexpr env' p) ps then [VRecord (interp_rexpr env' r)]
                                                     else []) s2) s1))
                                 | _, _ => default_value
                                 end
-    | EProj e x r => match interp_expr env e with
+    | EProj e x r => match interp_expr e with
                      | VSet s =>
-                         VSet (value_sort (List.map (fun v => VRecord (interp_rexpr (map.put env x v) r)) s))
+                         VSet (value_sort (List.map (fun v => VRecord (interp_rexpr (map.put map.empty x v) r)) s))
                      | _ => default_value
                      end
     end.
@@ -212,30 +212,30 @@ Section WithMap.
                      well_typed_pexpr (PEq e1 e2).
 
     Inductive type_of_rexpr : rexpr -> type -> Prop :=
-    | TRRecord el tl : Permutation (map fst el) (map fst tl) ->
-                       type_wf (TRecord tl) ->
-                       Forall2 (fun ep tp => type_of_aexpr (snd ep) (snd tp)) el tl ->
+    | TRRecord el tl : type_wf (TRecord tl) ->
+                       Forall2 (fun ep tp => fst ep = fst tp) (record_sort el) tl ->
+                       Forall2 (fun ep tp => type_of_aexpr (snd ep) (snd tp)) (record_sort el) tl ->
                        type_of_rexpr (RRecord el) (TRecord tl).
   End WithGenv.
 
-  Inductive type_of_expr (Genv : tenv) : expr -> type -> Prop :=
+  Inductive type_of_expr : expr -> type -> Prop :=
   | TEEmptySet tl : type_wf (TRecord tl) ->
-                    type_of_expr Genv (EEmptySet tl) (TRecord tl)
-  | TESetInsert r e t : type_of_rexpr Genv r t ->
-                        type_of_expr Genv e t ->
-                        type_of_expr Genv (ESetInsert r e) t
-  | TEFilter e x ps t : type_of_expr Genv e t ->
-                        Forall (well_typed_pexpr (map.put Genv x t)) ps ->
-                        type_of_expr Genv (EFilter e x ps) t
+                    type_of_expr (EEmptySet tl) (TRecord tl)
+  | TESetInsert r e t : type_of_rexpr map.empty r t ->
+                        type_of_expr e t ->
+                        type_of_expr (ESetInsert r e) t
+  | TEFilter e x ps t : type_of_expr e t ->
+                        Forall (well_typed_pexpr (map.put map.empty x t)) ps ->
+                        type_of_expr (EFilter e x ps) t
   | TEJoin e1 e2 x1 x2 ps r t1 t2 t :
-    type_of_expr Genv e1 t1 ->
-    type_of_expr Genv e2 t2 ->
-    Forall (well_typed_pexpr (map.put (map.put Genv x1 t1) x2 t2)) ps ->
-    type_of_rexpr (map.put (map.put Genv x1 t1) x2 t2) r t ->
-    type_of_expr Genv (EJoin e1 e2 x1 x2 ps r) t
-  | TEProj e x r t1 t2 : type_of_expr Genv e t1 ->
-                         type_of_rexpr (map.put Genv x t1) r t2 ->
-                         type_of_expr Genv (EProj e x r) t2.
+    type_of_expr e1 t1 ->
+    type_of_expr e2 t2 ->
+    Forall (well_typed_pexpr (map.put (map.put map.empty x1 t1) x2 t2)) ps ->
+    type_of_rexpr (map.put (map.put map.empty x1 t1) x2 t2) r t ->
+    type_of_expr (EJoin e1 e2 x1 x2 ps r) t
+  | TEProj e x r t1 t2 : type_of_expr e t1 ->
+                         type_of_rexpr (map.put map.empty x t1) r t2 ->
+                         type_of_expr (EProj e x r) t2.
 
   Import ResultMonadNotations.
   Open Scope string_scope.
