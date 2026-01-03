@@ -356,7 +356,7 @@ Section WithVarenv.
       (dcls1 ++ dcls2 ++
          [ {| decl_R := aux1; decl_sig := lower_rec_type attr_tys1 |};
            {| decl_R := aux2; decl_sig := lower_rec_type attr_tys2 |} ],
-        [ {| rule_head := {| fact_R := out; fact_args := r' |} ;
+        rls1 ++ rls2 ++ [ {| rule_head := {| fact_R := out; fact_args := r' |} ;
             rule_body :=
               [ {| fact_R := aux1; fact_args := vs1 |};
                 {| fact_R := aux2; fact_args := vs2 |} ];
@@ -730,6 +730,12 @@ Section WithMaps.
         Nat.lt n1 n2
     end.
 
+  Definition rel_le (r1 r2 : rel) : Prop :=
+    match r1, r2 with
+      nat_rel n1, nat_rel n2 =>
+        Nat.le n1 n2
+    end.
+
   Definition lower_rec_value (v : value) : list obj :=
     match v with
     | VRecord l => map (fun p => lower_atomic_value (snd p)) l
@@ -929,22 +935,6 @@ Section WithMaps.
     apply_Forall_In.
   Qed.
 
-  Lemma prog_impl_fact_fresh_heads : forall prog prog' f,
-      (* new rules in prog' can only be applied at most once
-         at the root of the proof tree
-         if the heads of the new rules are not in the body of any rules *)
-      prog_impl_fact (prog ++ prog') f ->
-      (forall r1 r2, In r1 prog' -> In r2 (prog ++ prog') ->
-                     forall hyp, In hyp r2.(rule_body) ->
-                                 r1.(rule_head).(fact_R) <> hyp.(fact_R)) ->
-      prog_impl_fact prog f \/
-        exists hyps r, In r prog' /\ rule_impl r f hyps /\ Forall (prog_impl_fact prog) hyps.
-  Proof.
-    unfold prog_impl_fact. intros.
-    induction H.
-    rewrite Exists_app in *.
-  Admitted.
-
   Lemma put_ctx_correct : forall ctx vars vs,
       NoDup vars ->
       Forall2 (fun x v => map.get (put_ctx ctx vars vs) x = Some v) vars vs.
@@ -974,7 +964,60 @@ Section WithMaps.
           (map.put env x (VRecord vl))
           (put_attr_bindings m x (map fst tl) vars)
           (put_ctx ctx vars (map (fun p => lower_atomic_value (snd p)) vl)).
+  Admitted.
+
+  Lemma put_ctx_diff : forall ctx vars1 vars2 vs1 vs2,
+    Forall (fun x => ~ In x vars2) vars1 ->
+              put_ctx (put_ctx ctx vars1 vs1) vars2 vs2 =
+                put_ctx (put_ctx ctx vars2 vs2) vars1 vs1.
     Admitted.
+
+  Lemma mk_vars_disjoint : forall n1 n2 l1 l2,
+      n1 + l1 <= n2 ->
+      Forall (fun x => ~ In x (mk_vars n2 l2)) (mk_vars n1 l1).
+  Admitted.
+
+    Ltac apply_in_nil :=
+    lazymatch goal with
+      H: In _ nil |- _ => apply in_nil in H
+    end.
+
+  Ltac destruct_In :=
+    lazymatch goal with
+      H: In _ (_ :: _) |- _ => destruct H; subst end.
+
+  Ltac prove_tenv_wf := eauto using tenv_wf_step, tenv_wf_empty, type_of_expr__type_wf.
+
+  Ltac prove_locals_wf := repeat eapply locals_wf_step; auto using locals_wf_empty; constructor; auto.
+
+  Ltac prove_maps_wf := repeat eapply maps_wf_step; auto using  maps_wf_empty, mk_vars_NoDup, mk_vars_length; constructor; auto.
+
+  Ltac prove_lower_expr_complete'_hyps :=
+    repeat constructor; auto; cbn;
+    lazymatch goal with
+      H: prog_impl_fact _ (?r, _) |- pftree _ (?r, _) =>
+        eapply prog_impl_fact_weaken in H
+    end; eauto;
+    repeat lazymatch goal with
+      | |- incl ?x (?x ++ _) =>
+          apply incl_appl, incl_refl
+      | |- incl ?x (_ ++ _) => apply incl_appr
+      end.
+
+  Ltac apply_lower_expr_complete'_IH :=
+    lazymatch goal with
+    | IH: context[lower_expr _ _ ?e = _],
+        H: lower_expr _ _ ?e = _ |- _ =>
+        eapply IH in H
+    end.
+
+  Ltac apply_lower_expr_complete'_IH2 :=
+    lazymatch goal with
+    | IH: context[VSet ?l = _ -> _],
+        H: In _ ?l |- _ =>
+        let P := fresh "P" in
+        eapply IH in H as P; clear IH
+    end.
 
   Lemma lower_expr_complete' : forall e t,
       type_of_expr e t ->
@@ -988,9 +1031,7 @@ Section WithMaps.
   Proof.
     induction 1; cbn; intros.
     1:{ repeat invert_pair; do_injection.
-        lazymatch goal with
-          H: In _ nil |- _ => apply in_nil in H
-        end; intuition fail. }
+        apply_in_nil; intuition fail. }
     1:{ (* ESetInsert e s *)
       eapply expr_type_sound in H0 as S0; eauto.
       destruct_match_hyp; try now intuition idtac.
@@ -1017,7 +1058,7 @@ Section WithMaps.
       1:{ (* r is already in s *)
         apply_Forall_In.
         eapply lower_rexpr_type_sound in E0; eauto; subst.
-        eapply IHtype_of_expr in H2; auto.
+        apply_lower_expr_complete'_IH2; auto.
         2: eassumption.
         invert_pair.
         econstructor.
@@ -1048,8 +1089,8 @@ Section WithMaps.
         H: In _ (filter _ _) |- _ =>
           eapply filter_In in H; intuition eauto
       end.
-      apply_Forall_In.  invert_type_of_value.
-      eapply IHtype_of_expr in E0; eauto.
+      apply_Forall_In. invert_type_of_value.
+      apply_lower_expr_complete'_IH; eauto.
       econstructor.
       1:{ (* rule at the root of the proof tree *)
         rewrite Exists_exists.
@@ -1067,130 +1108,452 @@ Section WithMaps.
         induction ps; auto.
         cbn; constructor; repeat invert_Forall; auto.
         erewrite lower_pexpr_correct; eauto.
-        1: eauto using tenv_wf_step, tenv_wf_empty, type_of_expr__type_wf.
-        1: eapply locals_wf_step; auto using locals_wf_empty;
-        constructor; auto.
-        1: apply maps_wf_step; auto using  maps_wf_empty, mk_vars_NoDup, mk_vars_length; constructor; auto. }
-      1:{ (* proof tree for the hypothesis *)
-        constructor; auto. cbn.
-        eapply prog_impl_fact_weaken in E0.
-        1: unfold prog_impl_fact in E0; eauto.
-        apply incl_appl, incl_refl. }
+        1: prove_tenv_wf.
+        1: prove_locals_wf.
+        1: prove_maps_wf. }
+      1: (* proof tree for the hypothesis *)
+        prove_lower_expr_complete'_hyps. }
+    1:{ (* join *)
+      lazymatch goal with
+        H: type_of_expr e1 _,
+          H0: type_of_expr e2 _ |- _ =>
+          eapply expr_type_sound in H as S; eauto;
+          eapply expr_type_sound in H0 as S0; eauto
+      end.
+      repeat (destruct_match_hyp; try now intuition idtac).
+      do_injection; clear_refl.
+      intuition idtac; subst; invert_pair.
+      lazymatch goal with
+        E: lower_expr _ _ e1 = _,
+          E0: lower_expr _ _ e2 = _ |- _ =>
+          eapply lower_expr_type_sound in E as E'; eauto;
+          eapply lower_expr_type_sound in E0 as E0'; eauto
+      end; subst.
+      lazymatch goal with
+        H: In _ (value_sort _) |- _ =>
+          eapply Permutation_in in H;
+          [ | apply Permutation_sym, Permuted_value_sort ]
+      end.
+      repeat (
+          lazymatch goal with
+            H: In _ (flat_map _ _) |- _ =>
+              apply in_flat_map in H
+          end; destruct_exists; intuition idtac).
+      destruct_match_hyp; [ | apply_in_nil; intuition fail].
+      destruct_In; [ | apply_in_nil; intuition fail].
+      repeat (apply_lower_expr_complete'_IH2; eauto).
+      repeat apply_Forall_In. repeat invert_type_of_value.
+      econstructor.
+      1:{ (* rule at the root of the proof tree *)
+        rewrite Exists_exists.
+        eexists; split.
+        1: repeat (eapply in_or_app; right; try now (left; reflexivity)).
+        econstructor. constructor; cbn.
+        1:{ constructor; cbn.
+            eapply lower_rexpr_complete in E7; eauto.
+            1: eauto using tenv_wf_step, tenv_wf_empty, type_of_expr__type_wf.
+        1: prove_tenv_wf.
+        1: prove_locals_wf.
+        1: prove_maps_wf. }
+        1:{ repeat constructor; auto; cbn.
+            1:{ rewrite put_ctx_diff;
+                eauto using mk_vars_disjoint, put_ctx_sound, mk_vars_NoDup. }
+            1:{ eapply put_ctx_sound, mk_vars_NoDup. } }
+        instantiate (1:=map.empty).
+        eapply List.forallb_to_Forall
+          with (P:=fun x => interp_pexpr _ x = true)
+          in E2; eauto.
+        induction ps; auto.
+        cbn; constructor; repeat invert_Forall; auto.
+        erewrite lower_pexpr_correct; eauto.
+        1: prove_tenv_wf.
+        1: prove_locals_wf.
+        1: prove_maps_wf. }
+      1: (* proof tree for the hypothesis *)
+        prove_lower_expr_complete'_hyps. }
+    1:{ lazymatch goal with
+        H: type_of_expr _ _|- _ =>
+          eapply expr_type_sound in H as S; eauto
+      end.
+repeat (destruct_match_hyp; try now intuition idtac).
+      do_injection; clear_refl.
+      intuition idtac; subst; invert_pair.
+      lazymatch goal with
+        E: lower_expr _ _ _ = _ |- _ =>
+          eapply lower_expr_type_sound in E as E'; eauto
+      end; subst.
+      lazymatch goal with
+        H: In _ (value_sort _) |- _ =>
+          eapply Permutation_in in H;
+          [ | apply Permutation_sym, Permuted_value_sort ]
+      end.
+      lazymatch goal with
+        H: In _ (map _ _) |- _ =>
+          rewrite in_map_iff in H
+      end; destruct_exists; intuition idtac.
+      apply_lower_expr_complete'_IH2; eauto.
+      repeat apply_Forall_In. repeat invert_type_of_value.
+      econstructor.
+      1:{ (* rule at the root of the proof tree *)
+        rewrite Exists_exists.
+        eexists; split.
+        1: repeat (eapply in_or_app; right; try now (left; reflexivity)).
+        econstructor. constructor; cbn; auto.
+        1:{ constructor; cbn.
+            lazymatch goal with
+              E: lower_rexpr _ _ _ = _ |- _ =>
+                eapply lower_rexpr_complete in E
+              end; eauto.
+        1: prove_tenv_wf.
+        1: prove_locals_wf.
+        1: prove_maps_wf. }
+        1:{ repeat constructor; auto; cbn.
+            eapply put_ctx_sound, mk_vars_NoDup. } }
+      1: (* proof tree for the hypothesis *)
+        prove_lower_expr_complete'_hyps. }
+    Unshelve. all: apply map.empty.
+  Qed.
 
-      Admitted.
-(*
+  Lemma In_set_insert : forall x l,
+      In x (set_insert x l).
+  Proof.
+    intros. induction l; cbn; auto.
+    repeat case_match.
+    1: left; reflexivity.
+    1: apply_value_eqb_eq; left; reflexivity.
+    1: right; auto.
+    Qed.
+
+  Lemma prog_rule_head_lb : forall r0 r n e dcls rls r' tl',
+      rel_lt r0 r ->
+      rel_lt r (nat_rel n) ->
+      lower_expr r n e = (dcls, rls, r', tl') ->
+      Forall (fun rl => rel_lt r0 rl.(rule_head).(fact_R)) rls.
+  Admitted.
+
+  Lemma rel_lt_not_refl : forall r,
+      ~ rel_lt r r.
+  Proof.
+    intros; unfold rel_lt; case_match; cbn.
+    auto using Nat.lt_irrefl.
+  Qed.
+
+  Lemma Forall2_eq_map : forall A B (f : A -> B) vl vl',
+      Forall2 (fun v v' => f v = v') vl vl' ->
+      vl' = map f vl.
+  Admitted.
+
+  Lemma set_insert_preserve_In : forall x y l,
+      In x l -> In x (set_insert y l).
+  Proof.
+    induction l; cbn; auto.
+    intuition idtac; subst; repeat case_match.
+    all: repeat (try (left; reflexivity); right); auto.
+  Qed.
+
+  Lemma lower_expr_rule_body_rel_lb : forall e r n dcls rls n' tl,
+      lower_expr r n e = (dcls, rls, n', tl) ->
+      rel_lt r (nat_rel n) ->
+      Forall (fun rl =>
+                (Forall (fun hyp => rel_le r hyp.(fact_R)) rl.(rule_body)))
+        rls.
+  Proof.
+    induction e; cbn; intros; invert_pair.
+    1: constructor.
+    1:{ repeat destruct_match_hyp. invert_pair. admit. }
+  Admitted.
+
+  Lemma lower_expr_fresh_rel_gt : forall e r n dcls rls n' tl,
+      lower_expr r n e = (dcls, rls, n', tl) ->
+      rel_lt r (nat_rel n) ->
+      n <= n' /\
+        Forall (fun rl => forall hyp, In hyp rl.(rule_body) -> rel_lt hyp.(fact_R) (nat_rel n')) rls.
+    Admitted.
+
+  Lemma Forall2_interp_dexpr_unique : forall ctx l vl vl',
+      Forall2 (interp_dexpr ctx) l vl ->
+      Forall2 (interp_dexpr ctx) l vl' ->
+      vl = vl'.
+  Proof.
+    intros * H; revert vl'; induction H; cbn; intros;
+    invert_Forall2; auto.
+    f_equal; eauto using interp_dexpr_unique.
+  Qed.
+
+  Ltac invert_rule_impl :=
+    lazymatch goal with
+      H: rule_impl _ _ _ |- _ =>
+        inversion H; subst; clear H
+    end;
+    lazymatch goal with
+      H: rule_impl' _ _ _ _ |- _ =>
+        inversion H; subst; clear H
+    end.
+
+  Ltac invert_interp_fact :=
+    lazymatch goal with
+      H: interp_fact _ _ _ |- _ =>
+        inversion H; subst; clear H
+    end.
+
+  Inductive rel_dep_on (prog : list rule) : rel -> rel -> Prop :=
+  | rel_dep_on_base rl hyp : In rl prog ->
+                             In hyp rl.(rule_body) ->
+                             rel_dep_on prog rl.(rule_head).(fact_R) hyp.(fact_R)
+  | rel_dep_on_trans r1 r2 r3 : rel_dep_on prog r1 r2 ->
+                                rel_dep_on prog r2 r3 ->
+                                rel_dep_on prog r1 r3.
+
+  Lemma prog_impl_fact_fresh_heads : forall prog prog' f,
+      (* new rules in prog' can only be applied at most once
+         at the root of the proof tree
+         if the hypotheses of the new rules do not depend on any head of the new rules *)
+      prog_impl_fact (prog ++ prog') f ->
+      (forall r1 r2, In r1 prog' -> In r2 prog' ->
+                     forall hyp, In hyp r2.(rule_body) ->
+                                 ~ rel_dep_on (prog ++ prog') hyp.(fact_R) r1.(rule_head).(fact_R)) ->
+      prog_impl_fact prog f \/
+        exists hyps r, In r prog' /\ rule_impl r f hyps /\ Forall (prog_impl_fact prog) hyps.
+  Proof.
+    unfold prog_impl_fact. intros.
+    induction H.
+    rewrite Exists_app in *.
+  Admitted.
+  (*
+  Lemma prog_impl_fact_fresh_heads : forall prog prog' f,
+      (* new rules in prog' can only be applied at most once
+         at the root of the proof tree
+         if the heads of the new rules are not in the body of any rules *)
+      prog_impl_fact (prog ++ prog') f ->
+      (forall r1 r2, In r1 prog' -> In r2 (prog ++ prog') ->
+                     forall hyp, In hyp r2.(rule_body) ->
+                                 r1.(rule_head).(fact_R) <> hyp.(fact_R)) ->
+      prog_impl_fact prog f \/
+        exists hyps r, In r prog' /\ rule_impl r f hyps /\ Forall (prog_impl_fact prog) hyps.
+  Proof.
+    unfold prog_impl_fact. intros.
+    induction H.
+    rewrite Exists_app in *.
+  Admitted.
+*)
+  Ltac apply_lower_expr_sound'_IH :=
+    lazymatch goal with
+      IH: context[lower_expr _ _ ?e = _ -> _],
+        H: lower_expr _ _ ?e = _ |- _ =>
+        eapply IH in H
+    end.
+
   Lemma lower_expr_sound' : forall e t,
       type_of_expr e t ->
-      (* rel_lt out (nat_rel next_rel) -> *)
       forall s out next_rel dcls prog next_rel' tl',
+        rel_lt out (nat_rel next_rel) ->
         lower_expr out next_rel e = (dcls, prog, next_rel', tl') ->
         interp_expr e = VSet s ->
         (*  rel_ltb next_rel all_rels_in_prog
         rel_lt all_rels_in_prog next_rel' *)
         forall vl, prog_impl_fact prog (out, vl) ->
-                   exists rv, In rv s /\ vl = lower_rec_value rv ->.
+                   exists rv, In rv s /\ vl = lower_rec_value rv.
   Proof.
+    unfold prog_impl_fact.
     induction 1; cbn; intros.
     1:{ repeat invert_pair; do_injection; intuition idtac.
-        1: lazymatch goal with
-             H: In _ nil |- _ => apply in_nil in H
-           end; intuition fail.
-        1: inversion H0; subst;
-        rewrite Exists_nil in *; intuition fail. }
+        lazymatch goal with
+          H: pftree _ _ |- _ =>
+            inversion H;
+            rewrite Exists_nil in *
+        end; intuition fail. }
     1:{ (* ESetInsert e s *)
       eapply expr_type_sound in H0 as S0; eauto.
       destruct_match_hyp; try now intuition idtac.
-      do_injection; split; intros;
-        repeat destruct_match_hyp; clear_refl.
-      1:{ (* forward implication *)
-        apply set_insert_incl in H3.
-        intuition idtac; subst.
-        1:{ (* r is the newly inserted record e *)
-          cbn. invert_pair.
-          eapply lower_rexpr_sound in E0;
-            eauto using tenv_wf_empty, locals_wf_empty, maps_wf_empty.
-          econstructor.
-          2: apply Forall_nil.
-          rewrite Exists_exists.
-          eexists; split.
-          1: eapply in_or_app; right; left; reflexivity.
-          econstructor. constructor; auto.
-          constructor; cbn.
-          induction E0; auto.
-          constructor; eauto. }
-        1:{ (* r is already in s *)
-          apply_Forall_In.
-          rewrite IHtype_of_expr in H2; auto.
-          2: eassumption.
-          invert_pair.
-          eapply lower_expr_type_sound in E1; eauto; subst.
-          econstructor.
-          1:{ (* rule at the root of the proof tree *)
-            rewrite Exists_exists.
-            eexists. intuition idtac.
-            1: apply in_or_app; right; right; constructor; reflexivity.
-            econstructor.
-            constructor; cbn; auto.
-            1:{ constructor; cbn.
-                eapply record_value_ctx; eauto.
-                apply put_ctx_correct with (ctx := map.empty), mk_vars_NoDup. }
-            1:{ constructor; auto. constructor; cbn.
-                apply put_ctx_sound, mk_vars_NoDup. } }
-          1:{ (* proof tree for the hypothesis *)
-            constructor; auto; cbn.
-            eapply prog_impl_fact_weaken.
-            1: apply incl_appl, incl_refl.
-            auto. } } }
-      1:{ (* backward implication *)
-
-        (* prog_impl_fact prog f ->
-        rule_impl r f hyps ->
-        head_rel r = f.(fact_R). *)
-
-        (* lower_expr out next_rel e = (dcls, rls, n, tl) ->
-                   forall r, In r rls -> out <= head_rel r. *)
-        inversion H3; subst.
-        assert(H_r : forall r hyps, In r prog -> rule_impl r (out, lower_rec_value rv) hyps ->
-                              In r [{| rule_head := {| fact_R := out; fact_args := l0 |}; rule_body := []; rule_prop := [] |};
-                                    {| rule_head := {| fact_R := out; fact_args := map var_dexpr (mk_vars 0 (Datatypes.length l2)) |};
-                                      rule_body := [{| fact_R := nat_rel next_rel; fact_args := map var_dexpr (mk_vars 0 (Datatypes.length l2)) |}];
-                                      rule_prop := []
-                                    |}]).
-        { admit. }
-        rewrite Exists_exists in *. destruct_exists; intuition idtac.
-        apply H_r in H6 as H_r'; auto.
-
+      do_injection.
+      repeat destruct_match_hyp; clear_refl.
+      invert_pair.
+      lazymatch goal with
+        H: pftree _ _ |- _ =>
+          inversion H; subst
+      end.
+      rewrite Exists_app in *; intuition idtac.
+      1:{ rewrite Exists_exists in *.
+          destruct_exists. intuition idtac.
+          invert_rule_impl. invert_interp_fact.
+          (* Only the fresh rules can implement the output relation *)
+          eapply prog_rule_head_lb in E1; cbn; eauto.
+          apply_Forall_In. apply rel_lt_not_refl in E1.
+          intuition fail. }
+      rewrite !Exists_cons in *.
+      intuition idtac;
+        try now (rewrite Exists_nil in *; intuition fail).
+      1:{ (* vl is the newly added record value *)
+        invert_rule_impl; invert_interp_fact.
+        cbn in *; invert_Forall2.
+        lazymatch goal with
+          E: lower_rexpr _ _ _ = _ |- _ =>
+            eapply lower_rexpr_sound in E
+        end; eauto.
+        1:{ eexists. intuition idtac.
+            1: apply In_set_insert.
+            cbn; eauto using Forall2_eq_map. }
+          1: prove_tenv_wf.
+          1: prove_locals_wf.
+          1: prove_maps_wf. }
+      1:{ (* vl is already in the set *)
+        invert_rule_impl.
+        cbn in *; repeat invert_Forall2.
+        repeat invert_interp_fact. invert_Forall.
         repeat lazymatch goal with
-          H: In _ (_ :: _) |- _ =>
-            destruct H; subst
-               end;
-          try lazymatch goal with
-              H: In _ nil |- _ => apply in_nil in H; intuition fail
-            end.
+                 H: Forall _ [] |- _ => clear H end.
+        apply_lower_expr_sound'_IH; cbn; auto.
+        1:{ destruct_exists.
+            eexists; intuition idtac.
+            1: apply set_insert_preserve_In; eauto.
+            eassumption. }
+        cbn in *.
+        assert(vl = args').
+        { eauto using Forall2_interp_dexpr_unique. }
+        subst.
+        lazymatch goal with
+          H: pftree (fun _ _ => Exists _ ?rls) ?f |- _ =>
+            assert(prog_impl_fact rls f);
+            [ assumption | ]
+        end.
+        eapply prog_impl_fact_fresh_heads in H3.
+        2:{ intros.
+            repeat destruct_In; cbn in *; intuition idtac;
+              subst; cbn in *.
+            r < nat_rel n ->
+              lower_expr r n e = (dcls, rls, r', tl) ->
+              r <= rls < r'
+                           so if rls'.heads are all < r, then ~rel_dep_on (rls ++ rls') r (<r)
+            1:{ rewrite in_app_iff in *.
+                intuition idtac.
+                1:{ apply lower_expr_rule_body_rel_lb in E1; cbn; auto.
+                    repeat apply_Forall_In; subst.
+                    (* a < b; b <= a. contradiction *)
+                    admit. }
+                1:{ repeat destruct_In; try (apply_in_nil; intuition fail);
+                    cbn in *; intuition idtac; subst; cbn [fact_R] in *.
+                    eapply rel_lt_not_refl; eassumption. } }
+            1:{ (* same as above *) admit. } }
+        intuition idtac.
+        (* contradiction *)
+        repeat destruct_exists. intuition idtac.
+        repeat destruct_In; try (apply_in_nil; intuition fail).
+        1,2: invert_rule_impl; cbn in *;
+        invert_interp_fact;
+        apply rel_lt_not_refl in H1; intuition fail. } }
+    1:{ (* filter *)
+      eapply expr_type_sound in H as S; eauto.
+      destruct_match_hyp; try now intuition idtac.
+      do_injection.
+      repeat destruct_match_hyp; clear_refl.
+      invert_pair.
+      eapply lower_expr_type_sound in E0 as E0'; eauto; subst.
+      lazymatch goal with
+        H: pftree _ _ |- _ =>
+          inversion H; subst
+      end.
+      rewrite Exists_app in *; intuition idtac.
+      1:{ rewrite Exists_exists in *.
+          destruct_exists. intuition idtac.
+          invert_rule_impl. invert_interp_fact.
+          (* Only the fresh rules can implement the output relation *)
+          eapply prog_rule_head_lb in E0; cbn; eauto.
+          apply_Forall_In. apply rel_lt_not_refl in E0.
+          intuition fail. }
+      rewrite !Exists_cons in *.
+      intuition idtac;
+        try now (rewrite Exists_nil in *; intuition fail).
+      invert_rule_impl; invert_interp_fact.
+      cbn in *. repeat invert_Forall2.
+      invert_interp_fact; cbn in *.
+      assert (vl = args').
+      { eauto using Forall2_interp_dexpr_unique. }
+      subst.
+      invert_Forall.
+      repeat lazymatch goal with
+               H: Forall _ [] |- _ => clear H end.
+      apply_lower_expr_sound'_IH; cbn; auto.
+      1:{ destruct_exists.
+          eexists; intuition idtac.
+          2: eauto.
+          rewrite filter_In; intuition idtac.
+          rewrite forallb_forall; intros.
+          repeat apply_Forall_In; subst.
+          repeat invert_type_of_value.
+          rewrite <- lower_pexpr_correct; eauto.
+          1:{ rewrite Forall_map in *. apply_Forall_In. }
+          1: prove_tenv_wf.
+          1: prove_locals_wf.
+          1:{ assert(E_x0 : x0 = put_ctx x0 (mk_vars 0 (Datatypes.length tl')) (lower_rec_value (VRecord vl))). { admit. }
+            subst. rewrite E_x0. prove_maps_wf. } }
+      1:{ (* prove hypothesis *)
+        lazymatch goal with
+          H: pftree (fun _ _ => Exists _ ?rls) ?f |- _ =>
+            assert(prog_impl_fact rls f);
+            [ assumption | ]
+        end.
+        eapply prog_impl_fact_fresh_heads in H3.
+        2:{ intros.
+            repeat destruct_In; try (apply_in_nil; intuition fail);
+              cbn.
+            rewrite in_app_iff in *.
+            intuition idtac.
+            1:{ lazymatch goal with
+                H: lower_expr _ _ _ = _ |- _ =>
+                  apply lower_expr_rule_body_rel_lb in H
+              end; cbn; auto.
+                repeat apply_Forall_In; subst.
+                (* a < b; b <= a. contradiction *)
+                admit. }
+            1:{ repeat destruct_In; try (apply_in_nil; intuition fail);
+                cbn in *; intuition idtac; subst; cbn [fact_R] in *.
+                eapply rel_lt_not_refl; eassumption. } }
+        intuition idtac.
+        (* contradiction *)
+        repeat destruct_exists. intuition idtac.
+        repeat destruct_In; try (apply_in_nil; intuition fail).
+        invert_rule_impl; cbn in *;
+          invert_interp_fact;
+          apply rel_lt_not_refl in H1; intuition fail. } }
+    1:{ (* join *)
+      lazymatch goal with
+        H: type_of_expr e1 _,
+          H0: type_of_expr e2 _ |- _ =>
+          eapply expr_type_sound in H as S; eauto;
+          eapply expr_type_sound in H0 as S0; eauto
+      end.
+      repeat (destruct_match_hyp; try now intuition idtac).
+      do_injection; clear_refl.
+      intuition idtac; subst; invert_pair.
+      lazymatch goal with
+        E: lower_expr _ _ e1 = _,
+          E0: lower_expr _ _ e2 = _ |- _ =>
+          eapply lower_expr_type_sound in E as E'; eauto;
+          eapply lower_expr_type_sound in E0 as E0'; eauto
+      end; subst.
+      lazymatch goal with
+        H: pftree _ _ |- _ =>
+          inversion H; subst
+      end.
+      rewrite app_assoc in *.
+      rewrite Exists_app in *; intuition idtac.
+      1:{ rewrite Exists_exists in *.
+          destruct_exists. intuition idtac.
+          invert_rule_impl. invert_interp_fact.
+          (* Only the fresh rules can implement the output relation *)
+          eapply prog_rule_head_lb in E1 as E1';
+          eapply lower_expr_fresh_rel_gt in E1; cbn; eauto.
+          lazymatch goal with
+            H: lower_expr _ _ _ = _ |- _ =>
+              eapply prog_rule_head_lb in H
+          end; cbn; eauto.
+          2:{ intuition idtac. instantiate (1:=fact_R (rule_head x)). admit. }
+          erewrite in_app_iff in *; intuition idtac;
+            repeat apply_Forall_In;
+            lazymatch goal with
+              H: rel_lt ?x ?x |- _ =>
+                apply rel_lt_not_refl in H
+              end;
+            intuition fail. }
 
-        1:{ (* r is the newly inserted record e *)
-          inversion H6. inversion H2; subst; cbn in *.
-          inversion H7; subst; cbn in *.
-          inversion H8; subst.
-          assert(H_in_set_insert : forall x y s, x = y -> In x (set_insert y s)). {admit. }
-          apply H_in_set_insert.
-        admit. }
-
-
-            }
-        1:{ lazymatch goal with
-            H: prog_impl_fact _ _ |- _ =>
-              inversion H; subst
-          end. assert (rv = VRecord (interp_rexpr map.empty r) \/ In rv l).
-            { Lemma prog_impl_fact_or : prog_impl_fact (prog ++ prog') f -> prog_impl_fact prog f \/ exists hyps, rule_impl r f hyps /\ Forall (prog_impl_fact prog ++ prog') hyps.
-
-
-prog_impl_fact (prog1 ++ prog2) f -> prog_impl_fact prog1 f \/ rule_impl prog2
-                inversion H3; subst. intuition idtac.
-            }
-
-          erewrite
-          (*  split cases between rv = interp_rexpr env r and In rv l. *) all: admit. }
-        Admitted.
-*)
 End WithMaps.
