@@ -29,6 +29,18 @@ Ltac invert_Forall :=
   | H: Forall _ (_ :: _) |- _ => inversion H; subst; clear H
   end.
 
+Ltac invert_pair :=
+  lazymatch goal with
+    H: _ = (_, _) |- _ => inversion H; subst; clear H
+  end.
+
+Ltac invert_cons :=
+  lazymatch goal with H: _ :: _ = _ :: _ |- _ => inversion H; subst end.
+
+Ltac destruct_exists :=
+  lazymatch goal with
+    H: exists _, _ |- _ => destruct H end.
+
 Ltac rewrite_l_to_r :=
   lazymatch goal with
   | H: ?x = _, H': context[?x] |- _ => rewrite H in H'
@@ -301,7 +313,7 @@ Section WithVarenv.
     match attrs, vars with
     | [], _ | _, [] => m
     | attr :: attrs, v :: vars =>
-        put_attr_bindings (map.put m (x, attr) v) x attrs vars
+        map.put (put_attr_bindings m x attrs vars) (x, attr) v
     end.
 
   Definition lower_rec_type : list (string * type) -> list (string * dtype) :=
@@ -673,15 +685,6 @@ Section WithMaps.
             econstructor; eauto. } }
   Qed.
 
-  Ltac invert_pair :=
-    lazymatch goal with
-      H: _ = (_, _) |- _ => inversion H; subst; clear H
-    end.
-
-  Ltac destruct_exists :=
-    lazymatch goal with
-      H: exists _, _ |- _ => destruct H end.
-
   Lemma lower_rexpr_complete : forall Genv env m ctx e l attr_tys t,
       type_of_rexpr Genv e t ->
       lower_rexpr Genv m e = (l, attr_tys) ->
@@ -908,7 +911,7 @@ Section WithMaps.
   Fixpoint put_ctx (ctx : context) (xl : list var) (vl : list obj) : context :=
     match xl, vl with
     | [], _ | _, [] => ctx
-    | x :: xl, v :: vl => put_ctx (map.put ctx x v) xl vl
+    | x :: xl, v :: vl => map.put (put_ctx ctx xl vl) x v
     end.
 
   Lemma record_value_ctx : forall rv tl ctx vars,
@@ -920,8 +923,28 @@ Section WithMaps.
   Proof.
     intros * H1 H2.
     inversion H1; subst; clear H1.
-    Admitted.
-
+    cbn in *.
+    lazymatch goal with
+      |- Forall2 _ _ (map ?f ?vl) =>
+        remember (map f vl) as l;
+        generalize dependent vl;
+        generalize dependent l
+    end.
+    generalize dependent tl.
+    induction vars; intros.
+    1:{ invert_Forall2.
+        lazymatch goal with
+          H: [] = _ |- _ =>
+            symmetry in H; apply map_eq_nil in H; subst
+          end.
+        auto. }
+    1:{ invert_Forall2. cbn.
+        destruct vl; cbn in *; try discriminate.
+        destruct tl; repeat invert_Forall2.
+        invert_cons; clear_refl.
+        constructor; eauto.
+        constructor; auto. }
+  Qed.
 
   Lemma prog_impl_fact_weaken : forall prog prog' f,
       incl prog prog' ->
@@ -935,49 +958,266 @@ Section WithMaps.
     apply_Forall_In.
   Qed.
 
+  Ltac invert_NoDup :=
+    lazymatch goal with H: NoDup (_ :: _) |- _ => inversion H; subst end.
+
   Lemma put_ctx_correct : forall ctx vars vs,
       NoDup vars ->
+      length vars = length vs ->
       Forall2 (fun x v => map.get (put_ctx ctx vars vs) x = Some v) vars vs.
-  Admitted.
+  Proof.
+    intros; generalize dependent vs.
+    induction vars; cbn; auto; intros.
+    1:{ symmetry in H0; rewrite length_zero_iff_nil in H0.
+        subst; constructor. }
+    1:{ invert_NoDup.
+        destruct vs; cbn in *; try discriminate.
+        do_injection. constructor.
+        1: rewrite map.get_put_same; reflexivity.
+        1:{ eapply List.Forall2_impl_strong.
+            2: eauto.
+            cbn; intros.
+            assert(x <> a).
+            { intro contra. subst. intuition fail. }
+            rewrite map.get_put_diff; auto. } }
+  Qed.
+
+  Definition get_var_nat (x : var) :=
+    match x with
+      DVar n => n
+    end.
+
+  Lemma mk_vars_lb : forall n l,
+      Forall (fun x => n <= get_var_nat x) (mk_vars n l).
+  Proof.
+    intros; revert n.
+    induction l; intros; cbn; auto.
+    constructor; cbn; auto.
+    rewrite Forall_forall.
+    specialize (IHl (S n)).
+    intros. apply_Forall_In.
+    eapply Nat.le_trans; try eassumption.
+    apply Nat.le_succ_diag_r.
+  Qed.
 
   Lemma mk_vars_NoDup : forall n l,
       NoDup (mk_vars n l).
-  Admitted.
+  Proof.
+    intros; revert n; induction l; cbn; auto using NoDup_nil.
+    intros; constructor; auto.
+    intro contra.
+    eapply List.Forall_In in contra.
+    2: apply mk_vars_lb.
+    cbn in *. apply Nat.nle_succ_diag_l in contra.
+    assumption.
+  Qed.
 
   Lemma mk_vars_length : forall n l,
       Datatypes.length (mk_vars n l) = l.
-  Admitted.
+  Proof.
+    intros; revert n; induction l; cbn; auto.
+  Qed.
 
   Lemma put_ctx_sound : forall ctx vars vs,
       NoDup vars ->
+      length vars = length vs ->
       Forall2 (interp_dexpr (put_ctx ctx vars vs))
         (map var_dexpr vars) vs.
-  Admitted.
+  Proof.
+    induction vars; cbn; intros.
+    1:{ lazymatch goal with
+        H: 0 = _ |- _ =>
+          symmetry in H; apply length_zero_iff_nil in H
+      end. subst; auto. }
+    1:{ destruct vs; cbn in *; try discriminate.
+        invert_NoDup.
+        do_injection. constructor; auto.
+        2:{ eapply List.Forall2_impl_strong.
+            2: eauto.
+            cbn; intros.
+            rewrite in_map_iff in *.
+            destruct_exists; intuition idtac; subst.
+            assert(x0 <> a).
+            { intro contra. subst. intuition fail. }
+            invert_interp_dexpr.
+            constructor. rewrite map.get_put_diff; auto. }
+        constructor. rewrite map.get_put_same; reflexivity. }
+  Qed.
+
+  Ltac destruct_String_eqb x y :=
+    let E := fresh "E" in
+    destruct (String.eqb x y) eqn:E; rewrite ?String.eqb_eq, ?String.eqb_neq in *; subst.
+
+  Ltac rewrite_map_get_put_hyp :=
+    multimatch goal with
+    | H: context[map.get (map.put _ ?x _) ?x] |- _ =>
+        rewrite map.get_put_same in H
+    | H: context[map.get (map.put _ _ _) _] |- _ =>
+        rewrite map.get_put_diff in H; try now (simpl in *; intuition auto)
+    end.
+
+  Ltac rewrite_map_get_put_goal :=
+    multimatch goal with
+    | |- context[map.get (map.put _ ?x _) ?x] =>
+        rewrite map.get_put_same
+    | |- context[map.get (map.put _ _ _) _] =>
+        rewrite map.get_put_diff; try now (simpl in *; intuition auto)
+    end.
+
+  Lemma put_ctx_nil : forall ctx vars,
+      put_ctx ctx vars nil = ctx.
+  Proof.
+    induction vars; auto.
+  Qed.
+
+  Lemma put_ctx_None : forall x ctx vars l,
+      ~ In x vars ->
+      map.get ctx x = None ->
+      map.get (put_ctx ctx vars l) x = None.
+  Proof.
+    induction vars; cbn; auto; intros.
+    case_match; intuition auto.
+    rewrite_map_get_put_goal.
+  Qed.
 
   Lemma maps_wf_step : forall Genv env m ctx,
       maps_wf Genv env m ctx ->
       forall x tl vl vars,
         type_of_value (VRecord vl) (TRecord tl) ->
         NoDup vars ->
-        Datatypes.length vars = Datatypes.length tl ->
+        Forall (fun x' => map.get ctx x' = None) vars ->
+        length vars = length tl ->
         maps_wf (map.put Genv x (TRecord tl))
           (map.put env x (VRecord vl))
           (put_attr_bindings m x (map fst tl) vars)
           (put_ctx ctx vars (map (fun p => lower_atomic_value (snd p)) vl)).
-  Admitted.
+  Proof.
+    unfold maps_wf; intros * ?.
+    induction tl; cbn; intros.
+    1:{ destruct_String_eqb x x0;
+        repeat rewrite_map_get_put_hyp.
+        1:{ do_injection; cbn in *; discriminate. }
+        1:{ invert_type_of_value. invert_Forall2.
+            cbn. rewrite put_ctx_nil. eapply H; eauto. } }
+    1:{ destruct_String_eqb x x0;
+        repeat rewrite_map_get_put_hyp.
+        2:{ invert_type_of_value. repeat invert_Forall2.
+            destruct vars; cbn in *; try discriminate.
+            do_injection. invert_NoDup.
+            destruct_String_eqb x x0;
+              try congruence.
+            rewrite_map_get_put_goal; try congruence.
+            invert_Forall.
+            eapply IHtl with (x:=x0) in H6; eauto;
+              try rewrite_map_get_put_goal.
+            2: constructor; eauto.
+            case_match; intuition idtac.
+            assert(v0 <> v1).
+            { intro; subst.
+              rewrite put_ctx_None in *; auto. discriminate. }
+            rewrite_map_get_put_goal. }
+        1:{ invert_type_of_value. repeat invert_Forall2.
+            case_match; cbn in *; try discriminate.
+            repeat (do_injection; clear_refl). invert_NoDup. invert_Forall.
+            destruct_String_eqb (fst a) attr;
+              repeat rewrite_map_get_put_goal; try congruence;
+              destruct x, a; cbn in *; subst.
+            1:{ rewrite String.eqb_refl in *.
+                congruence. }
+            1:{ lazymatch goal with
+                H: _ <> _ |- _ =>
+                  rewrite <- String.eqb_neq, eqb_sym in H;
+                  rewrite H in *
+              end.
+                eapply IHtl with (x:=x0) in H6; eauto;
+                  try (rewrite_map_get_put_goal; reflexivity).
+                2: constructor; auto.
+                case_match; intuition idtac.
+                assert(v0 <> v2).
+                { intro; subst.
+                  rewrite put_ctx_None in *; auto. discriminate. }
+                rewrite_map_get_put_goal. } } }
+  Qed.
+
+  Definition var_eqb (x y : var) :=
+    match x, y with
+      DVar a, DVar b => a =? b
+    end.
+
+  Instance var_eq_dec : forall x y : var, BoolSpec (x = y) (x <> y) (var_eqb x y).
+  Proof.
+    intros.
+    destruct (var_eqb x y) eqn:E; constructor.
+    all: destruct x, y; cbn in *; f_equal; auto.
+    1: apply Nat.eqb_eq; assumption.
+    1: intro. do_injection; rewrite Nat.eqb_refl in *; discriminate.
+  Qed.
+
+  Lemma put_put_ctx_diff : forall ctx x v vars vs,
+      ~ In x vars ->
+      put_ctx (map.put ctx x v) vars vs = map.put (put_ctx ctx vars vs) x v.
+  Proof.
+    induction vars; cbn; auto; intros.
+    intuition idtac.
+    case_match; auto.
+    rewrite IHvars; auto.
+    rewrite Properties.map.put_put_diff; auto.
+  Qed.
 
   Lemma put_ctx_diff : forall ctx vars1 vars2 vs1 vs2,
     Forall (fun x => ~ In x vars2) vars1 ->
               put_ctx (put_ctx ctx vars1 vs1) vars2 vs2 =
                 put_ctx (put_ctx ctx vars2 vs2) vars1 vs1.
-    Admitted.
+  Proof.
+    intros * H; revert vs1 vs2.
+    induction H; cbn; auto; intros.
+    case_match; auto. rewrite <- IHForall.
+    apply map.map_ext; intro y.
+    rewrite put_put_ctx_diff; auto.
+  Qed.
+
+  Lemma mk_vars_range : forall n l,
+      Forall (fun x => n <= (get_var_nat x) /\ (get_var_nat x) < n + l) (mk_vars n l).
+  Proof.
+    intros *; revert n.
+    induction l; cbn; intros; auto.
+    constructor; cbn; intuition auto.
+    1:{ unfold lt. rewrite <- Nat.add_succ_comm.
+        apply Nat.le_add_r. }
+    1:{ eapply Forall_impl; eauto.
+        cbn; intros. intuition idtac.
+        1:{ rewrite Nat.succ_le_mono.
+            apply le_S; assumption. }
+        1:{ rewrite Nat.add_succ_r; assumption. } }
+  Qed.
 
   Lemma mk_vars_disjoint : forall n1 n2 l1 l2,
       n1 + l1 <= n2 ->
       Forall (fun x => ~ In x (mk_vars n2 l2)) (mk_vars n1 l1).
-  Admitted.
+  Proof.
+    intros; rewrite Forall_forall; intros.
+    intro contra.
+    repeat lazymatch goal with
+      H: In _ _ |- _ =>
+        eapply List.Forall_In in H; eauto using mk_vars_range
+           end; cbn in *.
+    intuition idtac.
+    eapply Nat.lt_le_trans in H; try eassumption.
+    apply Nat.lt_nge in H. intuition fail.
+  Qed.
 
-    Ltac apply_in_nil :=
+  Lemma mk_vars_disjoint2 : forall n1 n2 l1 l2,
+      n1 + l1 <= n2 ->
+      Forall (fun x => ~ In x (mk_vars n1 l1)) (mk_vars n2 l2).
+  Proof.
+    intros; rewrite Forall_forall; intros.
+    intro contra.
+    eapply List.Forall_In in contra.
+    2: apply mk_vars_disjoint; eauto.
+    eauto.
+  Qed.
+
+  Ltac apply_in_nil :=
     lazymatch goal with
       H: In _ nil |- _ => apply in_nil in H
     end.
@@ -990,7 +1230,11 @@ Section WithMaps.
 
   Ltac prove_locals_wf := repeat eapply locals_wf_step; auto using locals_wf_empty; constructor; auto.
 
-  Ltac prove_maps_wf := repeat eapply maps_wf_step; auto using  maps_wf_empty, mk_vars_NoDup, mk_vars_length; constructor; auto.
+  Ltac prove_maps_wf :=
+    repeat eapply maps_wf_step;
+    auto using maps_wf_empty, mk_vars_NoDup, mk_vars_length;
+    try (rewrite Forall_forall; intros; apply map.get_empty);
+    try now (constructor; auto).
 
   Ltac prove_lower_expr_complete'_hyps :=
     repeat constructor; auto; cbn;
@@ -1019,14 +1263,21 @@ Section WithMaps.
         eapply IH in H as P; clear IH
     end.
 
+  Ltac prove_vars_rec_eq_len :=
+    rewrite mk_vars_length;
+    lazymatch goal with
+      H: lower_expr _ _ _ = (_, _, _, ?tl) |- context[length ?tl] =>
+        eapply lower_expr_type_sound in H
+    end; eauto;
+    do_injection; invert_type_of_value; cbn;
+    rewrite length_map;
+    symmetry; eapply Forall2_length; eauto.
+
   Lemma lower_expr_complete' : forall e t,
       type_of_expr e t ->
-      (* rel_lt out (nat_rel next_rel) -> *)
       forall s out next_rel dcls prog next_rel' tl',
         lower_expr out next_rel e = (dcls, prog, next_rel', tl') ->
         interp_expr e = VSet s ->
-        (*  rel_ltb next_rel all_rels_in_prog
-        rel_lt all_rels_in_prog next_rel' *)
         forall rv, In rv s -> prog_impl_fact prog (out, lower_rec_value rv).
   Proof.
     induction 1; cbn; intros.
@@ -1070,9 +1321,13 @@ Section WithMaps.
           constructor; cbn; auto.
           1:{ constructor; cbn.
               eapply record_value_ctx; eauto.
-              apply put_ctx_correct with (ctx := map.empty), mk_vars_NoDup. }
+              apply put_ctx_correct with (ctx := map.empty).
+              1: apply mk_vars_NoDup.
+              1: prove_vars_rec_eq_len. }
           1:{ constructor; auto. constructor; cbn.
-              apply put_ctx_sound, mk_vars_NoDup. } }
+              apply put_ctx_sound.
+              1: apply mk_vars_NoDup.
+              1: prove_vars_rec_eq_len. } }
         1:{ (* proof tree for the hypothesis *)
           constructor; auto; cbn.
           eapply prog_impl_fact_weaken.
@@ -1098,9 +1353,15 @@ Section WithMaps.
         1: eapply in_or_app; right; left; reflexivity.
         econstructor. constructor; cbn.
         1:{ constructor; cbn.
-            eapply put_ctx_sound, mk_vars_NoDup. }
+            eapply put_ctx_sound.
+            1: apply mk_vars_NoDup.
+            1:{ rewrite mk_vars_length. rewrite length_map.
+                symmetry; eapply Forall2_length; eauto. } }
         1:{ constructor; auto. constructor; cbn.
-            eapply put_ctx_sound, mk_vars_NoDup. }
+            eapply put_ctx_sound.
+            1: apply mk_vars_NoDup.
+            1:{ rewrite mk_vars_length. rewrite length_map.
+                symmetry; eapply Forall2_length; eauto. } }
         instantiate (1:=map.empty).
         eapply List.forallb_to_Forall
           with (P:=fun x => interp_pexpr _ x = true)
@@ -1154,12 +1415,24 @@ Section WithMaps.
             1: eauto using tenv_wf_step, tenv_wf_empty, type_of_expr__type_wf.
         1: prove_tenv_wf.
         1: prove_locals_wf.
-        1: prove_maps_wf. }
+        1:{ prove_maps_wf. rewrite Forall_forall; intros.
+            apply put_ctx_None; auto using map.get_empty.
+            lazymatch goal with
+              H: In _ (mk_vars _ _) |- _ =>
+                eapply List.Forall_In in H
+            end.
+            2: apply mk_vars_disjoint2.
+            1: cbn in *; eassumption.
+            auto. } }
         1:{ repeat constructor; auto; cbn.
-            1:{ rewrite put_ctx_diff;
-                eauto using mk_vars_disjoint, put_ctx_sound, mk_vars_NoDup. }
-            1:{ eapply put_ctx_sound, mk_vars_NoDup. } }
-        instantiate (1:=map.empty).
+            1:{ rewrite put_ctx_diff.
+                2: eauto using mk_vars_disjoint.
+                apply put_ctx_sound; auto using mk_vars_NoDup.
+                rewrite mk_vars_length. rewrite length_map.
+                symmetry; eapply Forall2_length; eauto. }
+            1:{ eapply put_ctx_sound; auto using mk_vars_NoDup.
+                rewrite mk_vars_length. rewrite length_map.
+                symmetry; eapply Forall2_length; eauto. } }
         eapply List.forallb_to_Forall
           with (P:=fun x => interp_pexpr _ x = true)
           in E2; eauto.
@@ -1168,7 +1441,16 @@ Section WithMaps.
         erewrite lower_pexpr_correct; eauto.
         1: prove_tenv_wf.
         1: prove_locals_wf.
-        1: prove_maps_wf. }
+        1:{ prove_maps_wf.
+            rewrite Forall_forall; intros.
+            apply put_ctx_None; auto using map.get_empty.
+            lazymatch goal with
+              H: In _ (mk_vars _ _) |- _ =>
+                eapply List.Forall_In in H
+            end.
+            2: apply mk_vars_disjoint2.
+            1: cbn in *; eassumption.
+            auto. } }
       1: (* proof tree for the hypothesis *)
         prove_lower_expr_complete'_hyps. }
     1:{ lazymatch goal with
@@ -1208,11 +1490,15 @@ repeat (destruct_match_hyp; try now intuition idtac).
         1: prove_locals_wf.
         1: prove_maps_wf. }
         1:{ repeat constructor; auto; cbn.
-            eapply put_ctx_sound, mk_vars_NoDup. } }
+            eapply put_ctx_sound; auto using mk_vars_NoDup.
+                rewrite mk_vars_length. rewrite length_map.
+                symmetry; eapply Forall2_length; eauto. } }
       1: (* proof tree for the hypothesis *)
         prove_lower_expr_complete'_hyps. }
     Unshelve. all: apply map.empty.
   Qed.
+
+  Print Assumptions lower_expr_complete'.
 
   Lemma In_set_insert : forall x l,
       In x (set_insert x l).
@@ -1223,14 +1509,14 @@ repeat (destruct_match_hyp; try now intuition idtac).
     1: apply_value_eqb_eq; left; reflexivity.
     1: right; auto.
     Qed.
-
+(* ???
   Lemma prog_rule_head_lb : forall r0 r n e dcls rls r' tl',
       rel_lt r0 r ->
       rel_lt r (nat_rel n) ->
       lower_expr r n e = (dcls, rls, r', tl') ->
       Forall (fun rl => rel_lt r0 rl.(rule_head).(fact_R)) rls.
   Admitted.
-
+*)
   Lemma rel_lt_not_refl : forall r,
       ~ rel_lt r r.
   Proof.
@@ -1241,7 +1527,9 @@ repeat (destruct_match_hyp; try now intuition idtac).
   Lemma Forall2_eq_map : forall A B (f : A -> B) vl vl',
       Forall2 (fun v v' => f v = v') vl vl' ->
       vl' = map f vl.
-  Admitted.
+  Proof.
+    induction 1; cbn; congruence.
+  Qed.
 
   Lemma set_insert_preserve_In : forall x y l,
       In x l -> In x (set_insert y l).
@@ -1250,7 +1538,7 @@ repeat (destruct_match_hyp; try now intuition idtac).
     intuition idtac; subst; repeat case_match.
     all: repeat (try (left; reflexivity); right); auto.
   Qed.
-
+(* ???
   Lemma lower_expr_rule_body_rel_lb : forall e r n dcls rls n' tl,
       lower_expr r n e = (dcls, rls, n', tl) ->
       rel_lt r (nat_rel n) ->
@@ -1269,6 +1557,8 @@ repeat (destruct_match_hyp; try now intuition idtac).
       n <= n' /\
         Forall (fun rl => forall hyp, In hyp rl.(rule_body) -> rel_lt hyp.(fact_R) (nat_rel n')) rls.
     Admitted.
+
+ *)
 
   Lemma Forall2_interp_dexpr_unique : forall ctx l vl vl',
       Forall2 (interp_dexpr ctx) l vl ->
@@ -1304,7 +1594,7 @@ repeat (destruct_match_hyp; try now intuition idtac).
                                 rel_dep_on prog r2 r3 ->
                                 rel_dep_on prog r1 r3.
 
-  Lemma prog_impl_fact_fresh_heads : forall prog prog' f,
+  Lemma prog_impl_fact_factor : forall prog prog' f,
       (* new rules in prog' can only be applied at most once
          at the root of the proof tree
          if the hypotheses of the new rules do not depend on any head of the new rules *)
@@ -1319,7 +1609,27 @@ repeat (destruct_match_hyp; try now intuition idtac).
     induction H.
     rewrite Exists_app in *.
   Admitted.
-  (*
+
+  Definition Forall_body P (rl : rule) :=
+    Forall (fun hyp => P hyp) rl.(rule_body).
+
+  Definition rel_le_lt (lb ub r : rel) :=
+    rel_le lb r /\ rel_lt r ub.
+
+  Definition rule_le_lt (lb ub : rel) (rl : rule) : Prop :=
+    rel_le_lt lb ub rl.(rule_head).(fact_R) /\
+      Forall_body (fun hyp => rel_le_lt lb ub hyp.(fact_R)) rl.
+
+  Lemma lower_expr_rel_bounds : forall r n e dcls rls n' tl,
+      rel_lt r (nat_rel n) ->
+      lower_expr r n e = (dcls, rls, n', tl) ->
+      Forall (rule_le_lt r (nat_rel n')) rls.
+  Admitted.
+(*
+  Lemma fresh_heads_not_dep :
+
+                           so if rls'.heads are all < r, then ~rel_dep_on (rls ++ rls') r (<r) *)
+  (* ??? first attempt
   Lemma prog_impl_fact_fresh_heads : forall prog prog' f,
       (* new rules in prog' can only be applied at most once
          at the root of the proof tree
@@ -1420,10 +1730,6 @@ repeat (destruct_match_hyp; try now intuition idtac).
         2:{ intros.
             repeat destruct_In; cbn in *; intuition idtac;
               subst; cbn in *.
-            r < nat_rel n ->
-              lower_expr r n e = (dcls, rls, r', tl) ->
-              r <= rls < r'
-                           so if rls'.heads are all < r, then ~rel_dep_on (rls ++ rls') r (<r)
             1:{ rewrite in_app_iff in *.
                 intuition idtac.
                 1:{ apply lower_expr_rule_body_rel_lb in E1; cbn; auto.
