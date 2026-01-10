@@ -1324,9 +1324,8 @@ repeat (destruct_match_hyp; try now intuition idtac).
                                 rel_dep_on prog r2 r3 ->
                                 rel_dep_on prog r1 r3.
 
-  (* !!! *)
+  (* !!! Assumption *)
   Lemma prog_impl_fact_strengthen : forall prog prog' r vs,
-  (* ??? not used, but seems to be the idea underlying prog_impl_fact_factor and prog_impl_fact_or *)
       prog_impl_fact (prog ++ prog') (r, vs) ->
       (forall rl', In rl' prog' ->
                    ~ rel_dep_on (prog ++ prog') r rl'.(rule_head).(fact_R)) ->
@@ -1504,74 +1503,12 @@ repeat (destruct_match_hyp; try now intuition idtac).
     rel_le_lt lb ub rl.(rule_head).(fact_R) /\
       Forall_body (fun hyp => rel_le_lt lb ub hyp.(fact_R)) rl.
 
-  Lemma lower_expr_rel_bounds : forall r n e dcls rls n' tl,
-      lower_expr r n e = (dcls, rls, n', tl) ->
-      rel_lt r (nat_rel n) ->
-      Forall (rule_le_lt r (nat_rel n')) rls.
-  Admitted.
-
-  Lemma rel_le_refl : forall r, rel_le r r.
-  Proof.
-    destruct r; cbn; auto.
-  Qed.
-
-  Lemma lower_expr_fresh_rel : forall r n e dcls rls n' tl,
-      lower_expr r n e = (dcls, rls, n', tl) ->
-      rel_lt r (nat_rel n) ->
-      n <= n'.
-  Admitted.
-
-  (* !!! *)
-  Lemma fresh_heads_not_dep : forall rls rls' lb ub r r',
-      Forall (rule_le_lt lb ub) rls ->
-      Forall (fun rl' => ~ rel_le_lt lb ub rl'.(rule_head).(fact_R)) rls' ->
-      rel_le_lt lb ub r ->
-      ~ rel_le_lt lb ub r' ->
-      ~ rel_dep_on (rls ++ rls') r r'.
-  Admitted.
-
-  Ltac apply_lower_expr_sound'_IH :=
-    lazymatch goal with
-      IH: context[lower_expr _ _ ?e = _ -> _],
-        H: lower_expr _ _ ?e = _ |- _ =>
-        eapply IH in H
-    end.
-
-  Ltac apply_lower_expr_sound'_IH2 :=
-    lazymatch goal with
-      IH: context [ lower_expr _ _ ?e = _ -> _ ],
-        _: lower_expr _ _ ?e = (_, ?rls, _, _),
-          H: prog_impl_fact ?rls _ |- _ =>
-        eapply IH in H
-    end.
-
   Lemma rel_lt_nge : forall r r',
       rel_lt r r' -> ~ rel_le r' r.
   Proof.
     destruct r, r'. cbn.
     intros; apply Nat.lt_nge.
     assumption.
-  Qed.
-
-  Lemma rule_le_lt_weaken : forall lb lb' ub ub' rl,
-      rel_le lb' lb ->
-      rel_le ub ub' ->
-      rule_le_lt lb ub rl ->
-      rule_le_lt lb' ub' rl.
-  Admitted.
-
-  Lemma Forall2_interp_dexpr_alt : forall ctx vars vl,
-      Forall2 (interp_dexpr ctx) (map var_dexpr vars) (lower_rec_value (VRecord vl)) ->
-      Forall2 (fun x' v' => map.get ctx x' = Some v')
-        vars (map (fun p => lower_atomic_value (snd p)) vl).
-  Proof.
-    induction vars; cbn; intros.
-    1:{ invert_Forall2.
-        symmetry in H0; apply map_eq_nil in H0.
-        constructor. }
-    1:{ destruct vl; cbn in *; invert_Forall2.
-        constructor; auto.
-        invert_interp_dexpr; assumption. }
   Qed.
 
   Lemma rel_lt_le_trans : forall r1 r2 r3,
@@ -1588,15 +1525,208 @@ repeat (destruct_match_hyp; try now intuition idtac).
     cbn; eauto using Nat.le_trans.
   Qed.
 
-  (* !!! *)
-  Lemma indep_rules_not_dep : forall lb lb' ub ub' rls rls' r r',
+  Lemma rel_le_refl : forall r, rel_le r r.
+  Proof.
+    destruct r; cbn; auto.
+  Qed.
+
+  Definition rel_le_lt_comp (lb ub r : rel) :=
+    match lb, ub, r with
+      nat_rel l, nat_rel u, nat_rel n =>
+        Nat.leb l n && Nat.ltb n u
+    end.
+
+  Lemma rel_le_lt_comp_true_iff : forall lb ub r,
+      rel_le_lt_comp lb ub r = true <-> rel_le_lt lb ub r.
+  Proof.
+    unfold rel_le_lt.
+    destruct lb, ub, r; cbn [rel_le_lt_comp leb].
+    rewrite Bool.andb_true_iff.
+    rewrite Nat.leb_le, Nat.ltb_lt.
+    cbn; intuition auto.
+  Qed.
+
+  Lemma rel_le_lt_comp_false_iff : forall lb ub r,
+      rel_le_lt_comp lb ub r = false <-> ~rel_le_lt lb ub r.
+  Proof.
+    unfold rel_le_lt.
+    destruct lb, ub, r; cbn [rel_le_lt_comp leb].
+    rewrite Bool.andb_false_iff. cbn [rel_le rel_lt].
+    rewrite <- Nat.leb_le, <- Nat.ltb_lt.
+    split; intros; intuition idtac; try congruence.
+    rewrite <- andb_false_iff, <- not_true_iff_false.
+    intro. rewrite andb_true_iff in *.
+    intuition idtac.
+  Qed.
+
+  Lemma lower_expr_fresh_rel : forall e r n dcls rls n' tl,
+      lower_expr r n e = (dcls, rls, n', tl) ->
+      rel_lt r (nat_rel n) ->
+      n <= n'.
+  Proof.
+    induction e; cbn; intros;
+      repeat destruct_match_hyp; invert_pair; auto.
+    all: repeat lazymatch goal with
+             IH: context[lower_expr _ _ _ = _ -> _],
+               H: lower_expr _ _ _ = _ |- _ =>
+               eapply IH in H; clear IH
+           end; cbn; eauto using Nat.lt_le_incl, Nat.le_trans.
+  Qed.
+
+  Lemma rule_le_lt_weaken : forall lb lb' ub ub' rl,
+      rel_le lb' lb ->
+      rel_le ub ub' ->
+      rule_le_lt lb ub rl ->
+      rule_le_lt lb' ub' rl.
+  Proof.
+    unfold rule_le_lt, rel_le_lt, Forall_body; intros.
+    intuition eauto using rel_le_trans, rel_lt_le_trans.
+    rewrite Forall_forall; intros; apply_Forall_In;
+    intuition eauto using rel_le_trans, rel_lt_le_trans.
+  Qed.
+
+  Lemma rel_lt_le : forall r r',
+      rel_lt r r' -> rel_le r r'.
+  Proof.
+    destruct r, r'; cbn in *; auto using Nat.lt_le_incl.
+  Qed.
+
+  Ltac apply_lower_expr_rel_bounds_IH :=
+    lazymatch goal with
+      IH: context[lower_expr _ _ ?e = _],
+        H: lower_expr _ _ ?e = _ |- _ =>
+        eapply IH in H; clear IH
+    end.
+
+  Lemma lower_expr_rel_bounds : forall e r n dcls rls n' tl,
+      lower_expr r n e = (dcls, rls, n', tl) ->
+      rel_lt r (nat_rel n) ->
+      Forall (rule_le_lt r (nat_rel n')) rls.
+  Proof.
+    induction e; cbn; intros; invert_pair; auto.
+    1:{ repeat destruct_match_hyp; invert_pair.
+        apply Forall_app; split.
+        1:{ apply_lower_expr_rel_bounds_IH; cbn; auto.
+            rewrite Forall_forall.
+            intros; apply_Forall_In.
+            eapply rule_le_lt_weaken; eauto;
+              cbn; auto using rel_lt_le. }
+        repeat constructor; cbn; auto using rel_le_refl, rel_lt_le.
+        1,2: eapply lower_expr_fresh_rel in E0; eauto; cbn; auto;
+            destruct r0; cbn in *; eauto;
+            rewrite Nat.le_succ_l in *; eauto using Nat.lt_le_trans.
+        1: eapply lower_expr_fresh_rel; eauto; cbn; auto. }
+    1:{ repeat destruct_match_hyp; invert_pair.
+        rewrite Forall_app; split.
+        1:{ apply_lower_expr_rel_bounds_IH; eauto; cbn; auto.
+            rewrite Forall_forall; intros.
+            apply_Forall_In.
+            unfold rule_le_lt, rel_le_lt in *; intuition idtac.
+            1: eauto using rel_le_trans, rel_lt_le_trans, rel_lt_le.
+            1:{ unfold Forall_body in *.
+                rewrite Forall_forall; intros.
+                apply_Forall_In.
+                intuition eauto using rel_le_trans, rel_lt_le_trans, rel_lt_le. } }
+        1:{ repeat constructor; cbn; auto using rel_le_refl, rel_lt_le.
+        1: eapply lower_expr_fresh_rel in E; eauto; cbn; auto;
+            destruct r; cbn in *; eauto;
+            rewrite Nat.le_succ_l in *; eauto using Nat.lt_le_trans.
+        1: eapply lower_expr_fresh_rel; eauto; cbn; auto. } }
+    1:{ repeat destruct_match_hyp; invert_pair.
+        lazymatch goal with
+          H1: lower_expr _ _ _ = _,
+            H2: lower_expr _ _ _ = _ |- _ =>
+            eapply lower_expr_fresh_rel in H1 as F1;
+            eapply lower_expr_fresh_rel in H2 as F2
+        end; cbn; auto.
+        repeat apply_lower_expr_rel_bounds_IH; eauto; cbn; auto.
+        repeat (rewrite Forall_app; split).
+        1:{ rewrite Forall_forall; intros.
+            apply_Forall_In.
+            eapply rule_le_lt_weaken; eauto using rel_lt_le.
+            cbn; eauto using Nat.le_trans. }
+        1:{ rewrite Forall_forall; intros.
+            apply_Forall_In.
+            eapply rule_le_lt_weaken; [ | | eauto ];
+              cbn; auto.
+            eauto using rel_lt_le, rel_le_trans, Nat.le_trans. }
+        1:{ repeat constructor; cbn; auto using rel_le_refl, rel_lt_le;
+            eauto using Nat.le_trans.
+            all: destruct r0; cbn in *.
+            1: eapply Nat.lt_le_trans; eauto using Nat.le_trans.
+            1: eauto using Nat.lt_le_incl, Nat.lt_le_trans. } }
+    1:{ repeat destruct_match_hyp; invert_pair.
+        lazymatch goal with
+          H1: lower_expr _ _ _ = _ |- _ =>
+            eapply lower_expr_fresh_rel in H1 as F1
+        end; cbn; auto.
+        repeat apply_lower_expr_rel_bounds_IH; eauto; cbn; auto.
+        repeat (rewrite Forall_app; split).
+        1:{ rewrite Forall_forall; intros.
+            apply_Forall_In.
+            eapply rule_le_lt_weaken; eauto using rel_lt_le.
+            cbn; eauto using Nat.le_trans. }
+        1:{ repeat constructor; cbn; auto using rel_le_refl, rel_lt_le;
+            eauto using Nat.le_trans.
+            all: destruct r0; cbn in *.
+            eapply Nat.lt_le_trans; eauto using Nat.le_trans. } }
+  Qed.
+
+  Lemma fresh_heads_not_dep : forall rls rls' lb ub r r',
       Forall (rule_le_lt lb ub) rls ->
-      Forall (rule_le_lt lb' ub') rls' ->
-      rel_le ub lb' \/ rel_le ub' lb ->
+      Forall (fun rl' => ~ rel_le_lt lb ub rl'.(rule_head).(fact_R)) rls' ->
       rel_le_lt lb ub r ->
-      rel_le_lt lb' ub' r' ->
-      ~rel_dep_on (rls ++ rls') r r'.
-  Admitted.
+      ~ rel_le_lt lb ub r' ->
+      ~ rel_dep_on (rls ++ rls') r r'.
+  Proof.
+    intros. intro contra.
+    induction contra.
+    1:{ rewrite in_app_iff in *.
+        intuition idtac; apply_Forall_In.
+        unfold rule_le_lt, Forall_body in *;
+          intuition idtac; apply_Forall_In. }
+    1:{ destruct (rel_le_lt_comp lb ub r2) eqn:E.
+        1: rewrite rel_le_lt_comp_true_iff in E; auto.
+        1: rewrite rel_le_lt_comp_false_iff in E; auto. }
+  Qed.
+
+  Ltac apply_lower_expr_sound'_IH :=
+    lazymatch goal with
+      IH: context[lower_expr _ _ ?e = _ -> _],
+        H: lower_expr _ _ ?e = _ |- _ =>
+        eapply IH in H
+    end.
+
+  Ltac apply_lower_expr_sound'_IH2 :=
+    lazymatch goal with
+      IH: context [ lower_expr _ _ ?e = _ -> _ ],
+        _: lower_expr _ _ ?e = (_, ?rls, _, _),
+          H: prog_impl_fact ?rls _ |- _ =>
+        eapply IH in H
+    end.
+
+  Lemma Forall2_interp_dexpr_alt : forall ctx vars vl,
+      Forall2 (interp_dexpr ctx) (map var_dexpr vars) (lower_rec_value (VRecord vl)) ->
+      Forall2 (fun x' v' => map.get ctx x' = Some v')
+        vars (map (fun p => lower_atomic_value (snd p)) vl).
+  Proof.
+    induction vars; cbn; intros.
+    1:{ invert_Forall2.
+        symmetry in H0; apply map_eq_nil in H0.
+        constructor. }
+    1:{ destruct vl; cbn in *; invert_Forall2.
+        constructor; auto.
+        invert_interp_dexpr; assumption. }
+  Qed.
+
+  Lemma rel_dep_on_In : forall prog r r',
+      rel_dep_on prog r r' ->
+      exists rl hyp, In rl prog /\ In hyp rl.(rule_body) /\
+                       rl.(rule_head).(fact_R) = r.
+  Proof.
+    induction 1; auto.
+    repeat eexists; eauto.
+  Qed.
 
   Ltac apply_rel_lt_nge :=
     lazymatch goal with
@@ -1604,6 +1734,50 @@ repeat (destruct_match_hyp; try now intuition idtac).
         apply rel_lt_nge in H;
         intuition fail
     end.
+
+  Ltac destruct_and :=
+    lazymatch goal with
+      H: _ /\ _ |- _ =>
+        destruct H
+    end.
+
+  Lemma indep_rules_not_dep : forall lb lb' ub ub' rls rls' r r',
+      Forall (rule_le_lt lb ub) rls ->
+      Forall (rule_le_lt lb' ub') rls' ->
+      rel_le ub lb' \/ rel_le ub' lb ->
+      rel_le_lt lb ub r ->
+      rel_le_lt lb' ub' r' ->
+      ~rel_dep_on (rls ++ rls') r r'.
+  Proof.
+    intros. intro contra.
+    induction contra.
+    1:{ unfold rule_le_lt in *.
+        rewrite in_app_iff in *.
+        intuition idtac; apply_Forall_In;
+          intuition idtac; unfold Forall_body in *;
+          apply_Forall_In;
+          unfold rel_le_lt in *; intuition idtac.
+        all: try lazymatch goal with
+                 _: rel_le ?ub ?lb',
+                   _: rel_le ?lb' ?r |- _ =>
+                   assert(rel_le ub r);
+                   [ eauto using rel_le_trans
+                   | apply_rel_lt_nge ]
+               end.
+        repeat lazymatch goal with
+                 _: rel_le ?ub ?lb',
+                   H: rel_le ?lb' ?r |- _ =>
+                   assert(rel_le ub r);
+                   [ eauto using rel_le_trans
+                   | ]; clear H
+               end. apply_rel_lt_nge. }
+    1:{ eapply rel_dep_on_In in contra2.
+        repeat destruct_exists.
+        repeat destruct_and; subst.
+        rewrite in_app_iff in *.
+        destruct H4; apply_Forall_In;
+          unfold rule_le_lt in *; intuition idtac. }
+  Qed.
 
   Ltac prove_rel_indep :=
     lazymatch goal with
