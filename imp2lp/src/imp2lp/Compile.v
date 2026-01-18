@@ -1256,8 +1256,6 @@ repeat (destruct_match_hyp; try now intuition idtac).
     Unshelve. all: apply map.empty.
   Qed.
 
-  Print Assumptions lower_expr_complete'.
-
   Lemma In_set_insert : forall x l,
       In x (set_insert x l).
   Proof.
@@ -2223,3 +2221,6 @@ repeat (destruct_match_hyp; try now intuition idtac).
   Qed.
 
 End WithMaps.
+
+Print Assumptions lower_expr_complete'.
+Print Assumptions lower_expr_sound'.

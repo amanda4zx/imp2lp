@@ -4,3 +4,6 @@
 [submodule "deps/coq-stdlib-edits"]
 	path = deps/coq-stdlib-edits
 	url = git@github.com:DIJamner/coq-stdlib-edits.git
+[submodule "deps/datalog"]
+	path = deps/datalog
+	url = https://github.com/OwenConoly/datalog.git
