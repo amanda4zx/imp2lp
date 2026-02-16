@@ -107,21 +107,26 @@ Inductive expr : Type :=
 | EJoin (e1 e2 : expr) (x y : string) (p : list pexpr) (r : rexpr) (* Join two tables *)
 | EProj (e : expr) (x : string) (r : rexpr) (* Generalized projection *).
 
-Definition block_call : Type := nat * list expr.
-
 Inductive block :=
-| BGoto (bc : block_call)
-| BIf (e : pexpr) (bc1 bc2 : block_call)
+| BGoto (asgns : list expr) (next_blk : nat)
+| BIf (e : pexpr) (asgns1 : list expr) (next_blk1 : nat) (asgns2 : list expr) (next_blk2 : nat)
 | BRet.
 
-Record cfg := { sig : list (string * type); entry : block_call; blks : list block }.
-  (* First declare all mutable variables, each annotated with its schema *)
-
-(* Semantics *)
-Require Import imp2lp.Value.
 Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
+Require Import imp2lp.Value.
 Require Import coqutil.Tactics.case_match.
 
+(* ??? use a list to represent the store so the compilation is simpler later
+Section WithMap.
+  Context {venv: map.map string value} {venv_ok: map.ok venv}.
+*)
+  (* First declare all mutable variables, each annotated with its schema *)
+  Record cfg_static := { sig : list (string * type); blks : list block }.
+  (* Store and an optional pointer to the next block *)
+  Record cfg_dynamic := { str : list value; ptr : option nat }.
+  Record cfg := { sig_blks : cfg_static; str_ptr : cfg_dynamic }.
+
+(* Semantics *)
 Ltac destruct_String_eqb x y :=
   let E := fresh "E" in
   destruct (String.eqb x y) eqn:E; rewrite ?String.eqb_eq, ?String.eqb_neq in *; subst.
@@ -303,69 +308,39 @@ Section WithMap.
     | x :: xs, v :: vs => map.put (mk_venv xs vs) x v
     end.
 
-  (* ??? remove
-  Inductive block_step (sig : list (string * type)) (blks : list block) (store : venv) (n : nat) : venv -> option nat -> Prop :=
-  | BSGoto n' args store' :
-    nth_error blks n = Some (BGoto (n', args)) ->
-    store' = mk_venv (List.map fst sig) (List.map (interp_expr store) args) ->
-    block_step sig blks store n store' (Some n')
-  | BSIf_true e n1 args1 bc2 store' :
-    nth_error blks n = Some (BIf e (n1, args1) bc2) ->
-    store' = mk_venv (List.map fst sig) (List.map (interp_expr store) args1) ->
-    interp_pexpr store map.empty e = true ->
-    block_step sig blks store n store' (Some n1)
-  | BSIf_false e bc1 n2 args2 store' :
-    nth_error blks n = Some (BIf e bc1 (n2, args2)) ->
-    store' = mk_venv (List.map fst sig) (List.map (interp_expr store) args2) ->
-    interp_pexpr store map.empty e = false ->
-    block_step sig blks store n store' (Some n2)
-  | BSRet :
-    nth_error blks n = Some BRet ->
-    block_step sig blks store n store None.
-   *)
+  Variant block_step (muts : list string) (str : list value) : block -> list value -> option nat -> Prop :=
+    | BSGoto n' asgns str' :
+      let store := mk_venv muts str in
+      str' = List.map (interp_expr store) asgns ->
+      block_step muts str (BGoto asgns n') str' (Some n')
+    | BSIf_true e n1 asgns1 n2 asgns2 str' :
+      let store := mk_venv muts str in
+      str' = List.map (interp_expr store) asgns1 ->
+      interp_pexpr store map.empty e = true ->
+      block_step muts str (BIf e asgns1 n1 asgns2 n2) str' (Some n1)
+    | BSIf_false e n1 asgns1 n2 asgns2 str' :
+      let store := mk_venv muts str in
+      str' = List.map (interp_expr store) asgns2 ->
+      interp_pexpr store map.empty e = false ->
+      block_step muts str (BIf e asgns1 n1 asgns2 n2) str' (Some n2)
+    | BSRet :
+      block_step muts str BRet str None.
 
-(* ??? remove
-  Inductive block_steps (sig : list (string * type)) (blks : list block) (store : venv) (n : nat) : venv -> option nat -> Prop :=
-  | BSS_base : block_steps sig blks store n store (Some n)
-  | BSS_trans store' n' blk' store'' m :
-    block_steps sig blks store n store' (Some n') ->
-    nth_error blks n' = Some blk' ->
-    block_step sig store' blk' store'' m ->
-    block_steps sig blks store n store'' m.
+  Variant cfg_step (g_s : cfg_static) (g_d : cfg_dynamic) : cfg_dynamic -> Prop :=
+    | CS_mk n blk g_d' :
+      g_d.(ptr) = Some n ->
+      nth_error g_s.(blks) n = Some blk ->
+      block_step (List.map fst g_s.(sig)) g_d.(str) blk g_d'.(str) g_d'.(ptr) ->
+      cfg_step g_s g_d g_d'.
 
-  Definition cfg_impl (g : cfg) (store : venv) : Prop :=
-    let '(n, args) := g.(entry) in
-    let store0 := mk_venv (List.map fst g.(sig)) (List.map (interp_expr map.empty) args) in
-    block_steps g.(sig) g.(blks) store0 n store None.
- *)
+  Inductive cfg_steps (g_s : cfg_static) : cfg_dynamic -> cfg_dynamic -> Prop :=
+    | CSS_refl g_d : cfg_steps g_s g_d g_d
+    | CSS_trans g_d0 g_d1 g_d2 :
+      cfg_steps g_s g_d0 g_d1 ->
+      cfg_step g_s g_d1 g_d2 ->
+      cfg_steps g_s g_d0 g_d2.
 
-  Inductive block_step (sig : list (string * type)) (store : venv) : block -> venv -> option nat -> Prop :=
-  | BSGoto n' args store' :
-    store' = mk_venv (List.map fst sig) (List.map (interp_expr store) args) ->
-    block_step sig store (BGoto (n', args)) store' (Some n')
-  | BSIf_true e n1 args1 bc2 store' :
-    store' = mk_venv (List.map fst sig) (List.map (interp_expr store) args1) ->
-    interp_pexpr store map.empty e = true ->
-    block_step sig store (BIf e (n1, args1) bc2) store' (Some n1)
-  | BSIf_false e bc1 n2 args2 store' :
-    store' = mk_venv (List.map fst sig) (List.map (interp_expr store) args2) ->
-    interp_pexpr store map.empty e = false ->
-    block_step sig store (BIf e bc1 (n2, args2)) store' (Some n2)
-  | BSRet :
-    block_step sig store BRet store None.
-
-  Inductive cfg_steps (g : cfg) : venv -> option nat -> Prop :=
-  | CS_base n args store0 :
-    g.(entry) = (n, args) ->
-    store0 = mk_venv (List.map fst g.(sig)) (List.map (interp_expr map.empty) args) ->
-    cfg_steps g store0 (Some n)
-  | CS_next store store' n blk m :
-    cfg_steps g store (Some n) ->
-    nth_error g.(blks) n = Some blk ->
-    block_step g.(sig) store blk store' m ->
-    cfg_steps g store' m.
-
-  Context {tenv : map.map string type} {env_ok : map.ok tenv}.
+  Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
 
   Fixpoint mk_tenv (ps : list (string * type)) : tenv :=
     match ps with
@@ -428,8 +403,8 @@ Section WithMap.
     Inductive type_of_expr : expr -> type -> Prop :=
     | TEAtom a t : type_of_aexpr map.empty a t ->
                  type_of_expr (EAtom a) t
-    | TELoc x t : map.get Gstore x = Some t ->
-                   type_of_expr (ELoc x) t
+    | TELoc x t : map.get Gstore x = Some (TSet (TRecord t)) ->
+                   type_of_expr (ELoc x) (TSet (TRecord t))
     | TEEmptySet tl : type_wf (TRecord tl) ->
                       type_of_expr (EEmptySet tl) (TSet (TRecord tl))
     | TESetInsert r e t : type_of_rexpr map.empty r t ->
@@ -504,32 +479,12 @@ Section WithMap.
       end.
   End WithGstore.
 
-  (* ??? remove
-  Inductive well_typed_block (Gstore : tenv) (sig : list (string * type)) (blks : list block) (blk_id : nat) : Prop :=
-  | WTBGoto n es :
-    nth_error blks blk_id = Some (BGoto (n, es)) ->
-    n < List.length blks ->
-    Forall2 (fun e t => type_of_expr Gstore e t) es (List.map snd sig) ->
-    well_typed_block Gstore sig blks blk_id
-  | WTBIf p n1 es1 n2 es2 :
-    nth_error blks blk_id = Some (BIf p (n1, es1) (n2, es2)) ->
-    n1 < List.length blks ->
-    n2 < List.length blks ->
-    well_typed_pexpr Gstore map.empty p ->
-    Forall2 (fun e t => type_of_expr Gstore e t) es1 (List.map snd sig) ->
-    Forall2 (fun e t => type_of_expr Gstore e t) es2 (List.map snd sig) ->
-    well_typed_block Gstore sig blks blk_id
-  | WTBRet :
-    nth_error blks blk_id = Some BRet ->
-    well_typed_block Gstore sig blks blk_id.
-*)
-
   Inductive well_typed_block (sig : list (string * type)) (num_blks : nat) : block -> Prop :=
   | WTBGoto n es Gstore :
     n < num_blks ->
     Gstore = mk_tenv sig ->
     Forall2 (fun e t => type_of_expr Gstore e t) es (List.map snd sig) ->
-    well_typed_block sig num_blks (BGoto (n, es))
+    well_typed_block sig num_blks (BGoto es n)
   | WTBIf p n1 es1 n2 es2 Gstore :
     n1 < num_blks ->
     n2 < num_blks ->
@@ -537,25 +492,9 @@ Section WithMap.
     well_typed_pexpr Gstore map.empty p ->
     Forall2 (fun e t => type_of_expr Gstore e t) es1 (List.map snd sig) ->
     Forall2 (fun e t => type_of_expr Gstore e t) es2 (List.map snd sig) ->
-    well_typed_block sig num_blks (BIf p (n1, es1) (n2, es2))
+    well_typed_block sig num_blks (BIf p es1 n1 es2 n2)
   | WTBRet :
     well_typed_block sig num_blks BRet.
-
-  (* ??? remove
-  Definition is_mut_ty (t : type) : Prop :=
-    (* Restrict mutable variable types to sets of records of atomic types or atomic types *)
-    match t with
-    | TSet (TRecord tl) => Forall (fun '(_, t) => is_atomic_type t) tl
-    | _ => is_atomic_type t
-    end. *)
-
-  Definition well_typed_cfg (g : cfg) : Prop :=
-    let '(n, args) := g.(entry) in
-    let num_blks := List.length g.(blks) in
-    n < num_blks /\
-      NoDup (List.map fst g.(sig)) /\
-      Forall2 (fun e t => type_of_expr map.empty e t) args (List.map snd g.(sig)) /\
-      Forall (well_typed_block g.(sig) num_blks) g.(blks).
 
   Definition venv_wf (Genv : tenv) (env : venv) : Prop :=
     forall x t, map.get Genv x = Some t ->
@@ -563,6 +502,27 @@ Section WithMap.
                 | Some v => type_of_value v t
                 | None => False
                 end.
+
+  Definition sig_wf (sig : list (string * type)) : Prop :=
+    NoDup (List.map fst sig) /\
+      Forall type_wf (List.map snd sig).
+
+  Definition str_wf (tys : list type) (vs : list value) : Prop :=
+    Forall2 type_of_value vs tys.
+
+  Definition well_typed_cfg (g : cfg) : Prop :=
+    let num_blks := List.length g.(sig_blks).(blks) in
+    let g_sig := g.(sig_blks).(sig) in
+    let g_blks := g.(sig_blks).(blks) in
+    let g_str := g.(str_ptr).(str) in
+    let g_ptr := g.(str_ptr).(ptr) in
+    sig_wf g_sig /\
+      Forall (well_typed_block g_sig num_blks) g_blks /\
+      str_wf (List.map snd g_sig) g_str /\
+      match g_ptr with
+      | Some n => n < num_blks
+      | None => True
+      end.
 
   Lemma Forall2_access_record : forall A B vl tl attr t (P : A -> B -> Prop),
       Forall2 (fun vp tp => fst vp = fst tp) vl tl ->
@@ -801,7 +761,7 @@ Section WithMap.
           rewrite_map_get_put_hyp.
         do_injection. intuition fail. }
   Qed.
-
+(* ??? remove
   Lemma Forall2_get_mk_venv : forall A B P (l : list A) (l' : list (string * B)) f x y,
       Forall2 P l (List.map snd l') ->
       NoDup (List.map fst l') ->
@@ -835,7 +795,7 @@ Section WithMap.
                 end.
                 intuition fail. } } }
   Qed.
-
+*)
   Lemma tenv_wf_mk_tenv : forall l,
       Forall type_wf (List.map snd l) ->
       tenv_wf (mk_tenv l).
@@ -845,7 +805,7 @@ Section WithMap.
     apply in_map with (f := snd) in H.
     apply_Forall_In.
   Qed.
-
+(*
   Ltac rewrite_get_mk_venv :=
     unfold venv_wf; intros;
     lazymatch goal with
@@ -861,8 +821,7 @@ Section WithMap.
       H: map.get _ _ = _ |- _ =>
         rewrite H
     end.
-
-  Lemma block_step_preserve_ty : forall num_blks sig store store' m blk,
+  Lemma block_step_type_sound : forall num_blks sig store store' m blk,
       well_typed_block sig num_blks blk ->
       venv_wf (mk_tenv sig) store ->
       block_step sig store blk store' m ->
@@ -888,33 +847,119 @@ Section WithMap.
     destruct_exists.
     exists x0; intuition fail.
   Qed.
+ *)
 
-  Theorem cfg_type_sound : forall g store m,
-      well_typed_cfg g ->
-      cfg_steps g store m ->
-      venv_wf (mk_tenv g.(sig)) store.
+  Lemma sig_wf__tenv_wf : forall g_sig,
+      sig_wf g_sig -> tenv_wf (mk_tenv g_sig).
+  Proof.
+    unfold sig_wf; intuition idtac.
+    induction g_sig; cbn; auto using tenv_wf_empty.
+    case_match; cbn in *.
+    invert_NoDup. invert_Forall.
+    intuition auto using tenv_wf_step.
+  Qed.
+
+  Lemma venv_wf__mk_env : forall g_str g_sig,
+      Forall2 type_of_value g_str (map snd g_sig) ->
+      venv_wf (mk_tenv g_sig) (mk_venv (List.map fst g_sig) g_str).
+  Proof.
+    induction g_str; intros; invert_Forall2;
+      destruct g_sig; try discriminate.
+    1:{ apply venv_wf_empty. }
+    1:{ cbn in *. case_match.
+        cbn in *; invert_cons.
+        repeat apply venv_wf_step; auto. }
+  Qed.
+
+  Lemma block_type_sound : forall sig num_blks blk str str' m,
+      block_step (List.map fst sig) str blk str' m ->
+      well_typed_block sig num_blks blk ->
+      sig_wf sig ->
+      str_wf (List.map snd sig) str ->
+      str_wf (List.map snd sig) str'.
+  Proof.
+    unfold sig_wf, str_wf; induction 1; subst; intros; auto.
+    all: lazymatch goal with
+        H: context[well_typed_block] |- _ =>
+          inversion H; subst
+         end;
+      unfold store in *;
+      apply Forall2_map_l;
+      eapply Forall2_impl; eauto;
+      cbn; intros;
+      eapply type_sound;
+      eauto using sig_wf__tenv_wf, venv_wf__mk_env.
+  Qed.
+
+  Lemma well_typed_block__ptr_in_range : forall g_sig num_blks g_str g_str' blk ptr,
+      block_step (map fst g_sig) g_str blk g_str' ptr ->
+      well_typed_block g_sig num_blks blk ->
+      match ptr with
+      | Some n => n < num_blks
+      | None => True
+      end.
+    inversion 1; subst; intros;
+      lazymatch goal with
+        H: context[well_typed_block] |- _ =>
+          inversion H; subst
+      end; auto.
+  Qed.
+
+  Theorem cfg_type_preservation : forall g_s g_d g_d',
+      well_typed_cfg {| sig_blks := g_s; str_ptr := g_d |} ->
+      cfg_steps g_s g_d g_d' ->
+      well_typed_cfg {| sig_blks := g_s; str_ptr := g_d' |}.
   Proof.
     unfold well_typed_cfg; intros.
-    destruct g; cbn in *.
-    repeat destruct_match_hyp; subst.
-    induction H0; cbn in *; intuition idtac.
-    1:{ invert_pair.
-        rewrite_get_mk_venv.
-        eapply type_sound; eauto using tenv_wf_mk_tenv, tenv_wf_empty, venv_wf_empty. }
-    1:{ lazymatch goal with
-        H: context[block_step] |- _ =>
-          eapply block_step_preserve_ty in H
-      end; eauto.
-        1:{ lazymatch goal with
-            H: nth_error _ _ = _ |- _ =>
-              apply nth_error_In in H
-          end. apply_Forall_In. }
-        1:{ rewrite Forall_forall; intros.
-            lazymatch goal with
-              H: Forall2 _ _ ?l, _: In _ ?l |- _ =>
-                eapply Forall2_In_r in H
-            end; eauto.
-            destruct_exists. intuition idtac.
-            eapply type_of_expr__type_wf; eauto using tenv_wf_empty. } }
+    induction H0; intuition idtac.
+    all: destruct g_s, g_d1, g_d2; cbn in *.
+    all: lazymatch goal with
+           H: context[cfg_step] |- _ =>
+             inversion H; subst
+         end.
+    all: lazymatch goal with
+           H: nth_error _ _ = _ |- _ =>
+             apply nth_error_In in H
+         end; apply_Forall_In.
+    1: eauto using block_type_sound.
+    1: eapply well_typed_block__ptr_in_range; eauto.
+  Qed.
+
+  Lemma lt_length__nth_error : forall A (l : list A) n,
+      n < List.length l ->
+      exists a, In a l /\ nth_error l n = Some a.
+  Proof.
+    induction l; cbn; intros.
+    1: apply Nat.nlt_0_r in H; intuition fail.
+    destruct n.
+    1: eexists; eauto.
+    apply Nat.succ_lt_mono in H.
+    apply IHl in H.
+    destruct_exists. intuition eauto.
+  Qed.
+
+  Theorem cfg_type_progress : forall g_s g_d,
+      well_typed_cfg {| sig_blks := g_s; str_ptr := g_d |} ->
+      match g_d.(ptr) with
+      | Some _ => True
+      | _ => False
+      end ->
+      exists g_d', cfg_step g_s g_d g_d'.
+  Proof.
+    destruct 1; subst; cbn in *; intuition idtac.
+    destruct_match_hyp; intuition idtac.
+    eapply lt_length__nth_error in H4; destruct_exists.
+    intuition idtac. destruct x.
+    1:{ exists {| str:=map (interp_expr (mk_venv (map fst g_s.(sig)) g_d.(str))) asgns; ptr:=Some next_blk |}.
+        econstructor; eauto. cbn.
+        constructor; trivial. }
+    1:{ destruct (interp_pexpr (mk_venv (map fst g_s.(sig)) g_d.(str)) map.empty e) eqn:Ep;
+        [ exists {| str:=map (interp_expr (mk_venv (map fst g_s.(sig)) g_d.(str))) asgns1; ptr:=Some next_blk1 |}
+          | exists {| str:=map (interp_expr (mk_venv (map fst g_s.(sig)) g_d.(str))) asgns2; ptr:=Some next_blk2 |} ];
+        econstructor; eauto; cbn;
+        constructor; trivial. }
+    1:{ exists {| str:=g_d.(str); ptr:=None |}.
+        econstructor; cbn; eauto.
+        constructor. }
   Qed.
 End WithMap.
