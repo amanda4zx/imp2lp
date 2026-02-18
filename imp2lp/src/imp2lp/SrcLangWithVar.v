@@ -170,7 +170,7 @@ Inductive type_wf : type -> Prop :=
 | WFTString : type_wf TString
 | WFTRecord tl : NoDup (map fst tl) ->
                  StronglySorted (fun a b => is_true (record_entry_leb a b)) tl ->
-                 Forall (fun p => type_wf (snd p) /\ is_atomic_type (snd p)) tl ->
+                 Forall (fun p => is_atomic_type (snd p)) tl ->
                  type_wf (TRecord tl)
 | WFTSet tl : type_wf (TRecord tl) ->
              type_wf (TSet (TRecord tl)).
