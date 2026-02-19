@@ -865,6 +865,166 @@ Section __.
           eapply List.incl_app_bw_r. eauto. }
     Qed.
 
+    Lemma cfg_steps__ptr_Some : forall g_sig g_d g_d',
+        cfg_steps g_sig g_d g_d' ->
+        forall n',
+        g_d'.(ptr) = Some n' ->
+        exists n, g_d.(ptr) = Some n.
+    Proof.
+      induction 1; intros.
+      1: eexists; eauto.
+      1:{ lazymatch goal with
+          H: cfg_step _ _ _ |- _ =>
+            destruct H
+        end.
+          eauto. }
+    Qed.
+
+    Ltac rewrite_asm_hyp :=
+      lazymatch goal with
+        H: ?x = _, _: context[?x] |- _ =>
+          rewrite H in *
+      end.
+
+    Ltac apply_in_nil :=
+      lazymatch goal with
+        H: In _ nil |- _ => apply in_nil in H
+      end.
+
+    Ltac destruct_In :=
+      lazymatch goal with
+        H: In _ (_ :: _) |- _ => destruct H; subst end.
+
+    Fixpoint mk_context (m : context) xl vl :=
+      match xl, vl with
+      | [], _ | _, [] => m
+      | x :: xl, v :: vl => mk_context (map.put m x v) xl vl
+      end.
+
+    Lemma mk_context_get_put_diff : forall x xl vl,
+        ~ In x xl ->
+        forall m,
+          map.get (mk_context m xl vl) x = map.get m x.
+    Proof.
+      induction xl; cbn; auto; intros.
+      destruct vl; auto.
+      intuition idtac.
+      erewrite IHxl; auto.
+      rewrite_map_get_put_goal.
+    Qed.
+
+    Lemma mk_context_rec_sound : forall (vl : list (string * value)) tl,
+        Forall2 (fun vp tp => type_of_value (snd vp) (snd tp)) vl tl ->
+        NoDup (map fst tl) ->
+        forall m,
+        Forall2 (Datalog.interp_expr (mk_context m (map attr_var (map fst tl)) (map (fun p => lower_atomic_value (snd p)) vl)))
+          (map (fun x => var_expr (attr_var x)) (map fst tl))
+          (map (fun p => lower_atomic_value (snd p)) vl).
+      induction 1; cbn; constructor.
+      1:{ constructor. rewrite mk_context_get_put_diff.
+          1: rewrite_map_get_put_goal; reflexivity.
+          invert_NoDup.
+          intro contra. rewrite in_map_iff in contra.
+          destruct_exists. intuition idtac.
+          do_injection. intuition fail. }
+      1: invert_NoDup; auto.
+    Qed.
+
+    Ltac invert_type_wf :=
+      lazymatch goal with
+        H: type_wf _ |- _ =>
+          inversion H; subst; clear H
+      end.
+
+    Lemma lower_mut_res__res_rel : forall x t rls ts v,
+        In (lower_mut_res (x, t)) rls ->
+        type_of_value v t -> type_wf t ->
+        prog_impl_fact rls (ret_rel, [Zobj ts]) ->
+        is_lowered_to_at v rls (str_rel x) ts ->
+        is_lowered_to v rls (res_rel x).
+    Proof.
+      unfold is_lowered_to_at, is_lowered_to; intros.
+      invert_type_wf; cbn in *;
+      invert_type_of_value; cbn in *.
+      1-3: constructor;
+      invert_Forall;
+      econstructor;
+      [ rewrite Exists_exists; eexists;
+        intuition eauto; econstructor;
+        (repeat eexists; repeat econstructor;
+         [ lazymatch goal with
+             |- _ = Some ?v =>
+               instantiate (1:=map.put (map.put map.empty time_var (Zobj ts)) (singleton_var x) v)
+           end | .. ];
+         repeat rewrite_map_get_put_goal; eauto)
+      | constructor; auto ].
+      1:{ constructor; auto.
+          econstructor.
+          1:{ rewrite Exists_exists; eexists;
+              intuition eauto. econstructor.
+              repeat eexists; repeat econstructor; cbn.
+              1:{ lazymatch goal with
+                  |- Forall2 _ (map _ ?sl) ?vl =>
+                    instantiate (1:=mk_context (map.put map.empty time_var (Zobj ts)) (map attr_var sl) vl)
+                end;
+                  apply mk_context_rec_sound; auto. }
+              1,2: rewrite mk_context_get_put_diff;
+              [ rewrite_map_get_put_goal; eauto
+              | intro contra;
+                rewrite in_map_iff in contra;
+                destruct_exists; intuition discriminate ].
+              1:{ apply mk_context_rec_sound; auto. } }
+          1:{ invert_Forall. repeat constructor; cbn; auto. } }
+      1:{ rewrite Forall_forall; intros.
+          apply_Forall_In.
+          rewrite in_map_iff in *.
+          destruct_exists; intuition idtac.
+          apply_Forall_In. invert_type_of_value. cbn.
+          invert_type_wf.
+           econstructor.
+          1:{ rewrite Exists_exists; eexists;
+              intuition eauto. econstructor.
+              repeat eexists; repeat econstructor; cbn.
+              1:{ lazymatch goal with
+                  |- Forall2 _ (map _ ?sl) ?vl =>
+                    instantiate (1:=mk_context (map.put map.empty time_var (Zobj ts)) (map attr_var sl) vl)
+                end;
+                  apply mk_context_rec_sound; auto. }
+              1,2: rewrite mk_context_get_put_diff;
+              [ rewrite_map_get_put_goal; eauto
+              | intro contra;
+                rewrite in_map_iff in contra;
+                destruct_exists; intuition discriminate ].
+              1:{ apply mk_context_rec_sound; auto. } }
+          1:{ repeat constructor; cbn; auto. } }
+    Qed.
+
+
+    Lemma lower_mut_res__venv_is_lowered_to : forall g_sig g_str rls ts,
+        incl (map lower_mut_res g_sig) rls ->
+        sig_wf g_sig ->
+        str_wf (map snd g_sig) g_str ->
+        prog_impl_fact rls (ret_rel, [Zobj ts]) ->
+        venv_is_lowered_to_at (map fst g_sig) g_str rls ts ->
+        venv_is_lowered_to (map fst g_sig) g_str rls.
+    Proof.
+      induction g_sig; destruct g_str;
+        unfold str_wf, venv_is_lowered_to_at; intros; invert_Forall2;
+        cbn in *; constructor.
+      all: lazymatch goal with
+             H: incl (_ :: _) _ |- _ =>
+               apply incl_cons_inv in H
+           end.
+      all: unfold sig_wf in *; intuition idtac.
+      1:{ invert_Forall2.
+          destruct a; cbn in *.
+          invert_Forall.
+          eapply lower_mut_res__res_rel; intuition eauto. }
+      1:{ eapply IHg_sig; eauto.
+          1: cbn in *; invert_NoDup; invert_Forall; intuition assumption.
+          1: invert_Forall2; auto. }
+    Qed.
+
     Theorem lower_cfg_complete' : forall (g : cfg) (Gstore : tenv) (g_d' : cfg_dynamic) dcls rls,
         lower_cfg g = (dcls, rls) ->
         Gstore = mk_tenv g.(sig_blks).(sig) ->
@@ -895,16 +1055,33 @@ Section __.
                       repeat eexists; eauto;
                         repeat econstructor. }
                   trivial. } }
-          1:{ admit. } }
+          1:{ eapply lower_mut_res__venv_is_lowered_to; eauto.
+              3:{ apply venv_is_lowered_to_at_0; auto.
+
+
+
+            unfold venv_is_lowered_to.
+              unfold str_wf in *.
+              remember g_d.(str) as g_str.
+              remember g.(sig_blks).(sig) as g_sig.
+              generalize dependent g_sig.
+              induction g_str; intros;
+                destruct g_sig; invert_Forall2; cbn; constructor.
+              2:{ eauto.
+              rewrite List.Forall2_combine.
+              apply lower_mut_res__res_rel.
+              unfold lower_mut_res.
+
+            unfold venv_is_lowered_to. admit. } }
       1:{ lazymatch goal with
           H: context[cfg_step] |- _ =>
             inversion H; subst
         end.
-          repeat lazymatch goal with
-                   H: ?x = _, _: context[?x] |- _ =>
-                     rewrite H in *
-                 end.
+          repeat rewrite_asm_hyp.
+          eapply cfg_steps__ptr_Some in H7; eauto.
+          destruct_exists. rewrite_asm_hyp.
           repeat destruct_match_hyp; subst.
+          case_match.
     Admitted.
 
 
