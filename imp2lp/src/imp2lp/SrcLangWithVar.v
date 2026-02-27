@@ -75,12 +75,12 @@ Notation "t1 =? t2" := (type_beq t1 t2) (at level 70) : fiat2_scope.
 
 (* Simple expressions *)
 Inductive aexpr : Type :=
-| AVar (x : string)
+(* | AVar (x : string) *)
 | ALoc (x : string)
 | ABool (b : bool)
 | AInt (n : Z)
 | AString (s : string)
-| ALet (a1 : aexpr) (x : string) (a2 : aexpr)
+(* | ALet (a1 : aexpr) (x : string) (a2 : aexpr) *)
 | ANot (a : aexpr)
 | AAnd (a1 a2 : aexpr)
 | APlus (a1 a2 : aexpr)
@@ -100,6 +100,7 @@ Variant rexpr : Type :=
 Inductive expr : Type :=
 | EAtom (a : aexpr)
 | ELoc (x : string)
+(* | ELet (e1 : expr) (x : string) (e2 : expr) *)
 | EEmptySet (l : list (string * type))
 | ESetInsert (r : rexpr) (e : expr)
 (* relational algebra *)
@@ -123,7 +124,7 @@ Section WithMap.
   (* First declare all mutable variables, each annotated with its schema *)
   Record cfg_static := { sig : list (string * type); blks : list block }.
   (* Store and an optional pointer to the next block *)
-  Record cfg_dynamic := { str : list value; ptr : option nat }.
+  Record cfg_dynamic := { str : list (string * value); ptr : option nat }.
   Record cfg := { sig_blks : cfg_static; str_ptr : cfg_dynamic }.
 
 (* Semantics *)
@@ -179,9 +180,9 @@ Inductive type_of_value : value -> type -> Prop :=
 | TVInt n : type_of_value (VInt n) TInt
 | TVBool b : type_of_value (VBool b) TBool
 | TVString s : type_of_value (VString s) TString
-| TVRecord vl tl :
-  Forall2 (fun vp tp => fst vp = fst tp) vl tl ->
-  Forall2 (fun vp tp => type_of_value (snd vp) (snd tp)) vl tl ->
+| TVRecord tl vl :
+  map fst tl = map fst vl ->
+  Forall2 (fun tp vp => type_of_value (snd vp) (snd tp)) tl vl ->
   type_of_value (VRecord vl) (TRecord tl)
 | TVSet l t : Forall (fun v => type_of_value v t) l ->
               type_of_value (VSet l) (TSet t).
@@ -191,23 +192,23 @@ Section WithMap.
 
   Definition default_value := VBool false.
 
-  Section WithStore.
-    Context (store : venv).
+  Section WithGstr.
+    Context (g_str : list (string * value)).
 
     Fixpoint interp_aexpr (env : venv) (e : aexpr) : value :=
       match e with
-      | AVar x => match map.get env x with
+      (* | AVar x => match map.get env x with
                   | Some v => v
                   | _ => default_value
-                  end
-      | ALoc x => match map.get store x with
-                  | Some v => v
+                  end *)
+      | ALoc x => match access_record g_str x with
+                  | Success v => v
                   | _ => default_value
                   end
       | ABool b => VBool b
       | AInt n => VInt n
       | AString s => VString s
-      | ALet e1 x e2 => interp_aexpr (map.put env x (interp_aexpr env e1)) e2
+      (* | ALet e1 x e2 => interp_aexpr (map.put env x (interp_aexpr env e1)) e2 *)
       | ANot e => match interp_aexpr env e with
                   | VBool b => VBool (negb b)
                   | _ => default_value
@@ -262,10 +263,11 @@ Section WithMap.
     Fixpoint interp_expr (e : expr) : value :=
       match e with
       | EAtom a => interp_aexpr map.empty a
-      | ELoc x => match map.get store x with
-                  | Some v => v
+      | ELoc x => match access_record g_str x with
+                  | Success v => v
                   | _ => default_value
                   end
+      (* | ELet e1 x e2 => interp_expr (map.put env x (interp_expr env e1)) e2 *)
       | EEmptySet _ => VSet []
       | ESetInsert r e => match interp_expr e with
                           | VSet s => VSet (set_insert (VRecord (interp_rexpr map.empty r)) s)
@@ -300,28 +302,19 @@ Section WithMap.
                        | _ => default_value
                        end
       end.
-  End WithStore.
+  End WithGstr.
 
-  Fixpoint mk_venv (xs : list string) (vs : list value) :=
-    match xs, vs with
-    | [], _ | _, [] => map.empty
-    | x :: xs, v :: vs => map.put (mk_venv xs vs) x v
-    end.
-
-  Variant block_step (muts : list string) (str : list value) : block -> list value -> option nat -> Prop :=
+  Variant block_step (muts : list string) (str : list (string * value)) : block -> list (string * value) -> option nat -> Prop :=
     | BSGoto n' asgns str' :
-      let store := mk_venv muts str in
-      str' = List.map (interp_expr store) asgns ->
+      str' = combine muts (List.map (interp_expr str) asgns) ->
       block_step muts str (BGoto asgns n') str' (Some n')
     | BSIf_true e n1 asgns1 n2 asgns2 str' :
-      let store := mk_venv muts str in
-      str' = List.map (interp_expr store) asgns1 ->
-      interp_pexpr store map.empty e = true ->
+      str' = combine muts (List.map (interp_expr str) asgns1) ->
+      interp_pexpr str map.empty e = true ->
       block_step muts str (BIf e asgns1 n1 asgns2 n2) str' (Some n1)
     | BSIf_false e n1 asgns1 n2 asgns2 str' :
-      let store := mk_venv muts str in
-      str' = List.map (interp_expr store) asgns2 ->
-      interp_pexpr store map.empty e = false ->
+      str' = combine muts (List.map (interp_expr str) asgns2) ->
+      interp_pexpr str map.empty e = false ->
       block_step muts str (BIf e asgns1 n1 asgns2 n2) str' (Some n2)
     | BSRet :
       block_step muts str BRet str None.
@@ -352,22 +345,22 @@ Section WithMap.
     forall x t, map.get G x = Some t ->
                 type_wf t.
 
-  Section WithGstore.
-    Context (Gstore : tenv).
+  Section WithGsig.
+    Context (g_sig : list (string * type)).
 
     Inductive type_of_aexpr (Genv : tenv) : aexpr -> type -> Prop :=
-    | TAVar x t : map.get Genv x = Some t ->
+    (* | TAVar x t : map.get Genv x = Some t ->
                   is_atomic_type t ->
-                  type_of_aexpr Genv (AVar x) t
-    | TALoc x t : map.get Gstore x = Some t ->
+                  type_of_aexpr Genv (AVar x) t *)
+    | TALoc x t : access_record g_sig x = Success t ->
                   is_atomic_type t ->
                   type_of_aexpr Genv (ALoc x) t
     | TABool b : type_of_aexpr Genv (ABool b) TBool
     | TAInt n : type_of_aexpr Genv (AInt n) TInt
     | TAString s : type_of_aexpr Genv (AString s) TString
-    | TALet e1 x e2 t1 t2 : type_of_aexpr Genv e1 t1 ->
+    (* | TALet e1 x e2 t1 t2 : type_of_aexpr Genv e1 t1 ->
                             type_of_aexpr (map.put Genv x t1) e2 t2 ->
-                            type_of_aexpr Genv (ALet e1 x e2) t2
+                            type_of_aexpr Genv (ALet e1 x e2) t2 *)
     | TANot e : type_of_aexpr Genv e TBool ->
                 type_of_aexpr Genv (ANot e) TBool
     | TAAnd e1 e2 : type_of_aexpr Genv e1 TBool ->
@@ -403,8 +396,11 @@ Section WithMap.
     Inductive type_of_expr : expr -> type -> Prop :=
     | TEAtom a t : type_of_aexpr map.empty a t ->
                  type_of_expr (EAtom a) t
-    | TELoc x t : map.get Gstore x = Some (TSet (TRecord t)) ->
-                   type_of_expr (ELoc x) (TSet (TRecord t))
+    | TELoc x t : access_record g_sig x = Success (TSet (TRecord t)) ->
+                  type_of_expr (ELoc x) (TSet (TRecord t))
+    (* | TELet e1 x e2 t1 t2 : type_of_expr Genv e1 t1 ->
+                            type_of_expr (map.put Genv x t1) e2 t2 ->
+                            type_of_expr Genv (ELet e1 x e2) t2 *)
     | TEEmptySet tl : type_wf (TRecord tl) ->
                       type_of_expr (EEmptySet tl) (TSet (TRecord tl))
     | TESetInsert r e t : type_of_rexpr map.empty r t ->
@@ -427,22 +423,19 @@ Section WithMap.
     Open Scope string_scope.
     Fixpoint type_check_aexpr (Genv : tenv) (e : aexpr) : result type :=
       match e with
-      | AVar x => match map.get Genv x with
+      (* | AVar x => match map.get Genv x with
                   | Some t => Success t
                   | _ => error:(x "not in scope")
-                  end
-      | ALoc x => match map.get Gstore x with
-                  | Some t => Success t
-                  | _ => error:(x "not in scope")
-                  end
+                  end *)
+      | ALoc x => access_record g_sig x
       | ABool _ => Success TBool
       | AInt _ => Success TInt
       | AString _ => Success TString
-      | ALet e1 x e2 => match type_check_aexpr Genv e1 with
+      (* | ALet e1 x e2 => match type_check_aexpr Genv e1 with
                         | Success t =>
                             type_check_aexpr (map.put Genv x t) e2
                         | err => err
-                        end
+                        end *)
       | ANot e => t <- type_check_aexpr Genv e;;
                   if type_beq t TBool
                   then Success TBool
@@ -477,21 +470,21 @@ Section WithMap.
                           | _ => error:("Variable" x "does not have a record type")
                           end
       end.
-  End WithGstore.
+  End WithGsig.
 
   Inductive well_typed_block (sig : list (string * type)) (num_blks : nat) : block -> Prop :=
   | WTBGoto n es Gstore :
     n < num_blks ->
     Gstore = mk_tenv sig ->
-    Forall2 (fun e t => type_of_expr Gstore e t) es (List.map snd sig) ->
+    Forall2 (fun tp e => type_of_expr sig e (snd tp)) sig es ->
     well_typed_block sig num_blks (BGoto es n)
   | WTBIf p n1 es1 n2 es2 Gstore :
     n1 < num_blks ->
     n2 < num_blks ->
     Gstore = mk_tenv sig ->
-    well_typed_pexpr Gstore map.empty p ->
-    Forall2 (fun e t => type_of_expr Gstore e t) es1 (List.map snd sig) ->
-    Forall2 (fun e t => type_of_expr Gstore e t) es2 (List.map snd sig) ->
+    well_typed_pexpr sig map.empty p ->
+    Forall2 (fun tp e => type_of_expr sig e (snd tp)) sig es1 ->
+    Forall2 (fun tp e => type_of_expr sig e (snd tp)) sig es2 ->
     well_typed_block sig num_blks (BIf p es1 n1 es2 n2)
   | WTBRet :
     well_typed_block sig num_blks BRet.
@@ -507,8 +500,9 @@ Section WithMap.
     NoDup (List.map fst sig) /\
       Forall type_wf (List.map snd sig).
 
-  Definition str_wf (tys : list type) (vs : list value) : Prop :=
-    Forall2 type_of_value vs tys.
+  Definition str_wf (g_sig : list (string * type)) (g_str : list (string * value)) : Prop :=
+    map fst g_sig = map fst g_str /\
+    Forall2 (fun tp vp => type_of_value (snd vp) (snd tp)) g_sig g_str.
 
   Definition well_typed_cfg (g : cfg) : Prop :=
     let num_blks := List.length g.(sig_blks).(blks) in
@@ -518,15 +512,15 @@ Section WithMap.
     let g_ptr := g.(str_ptr).(ptr) in
     sig_wf g_sig /\
       Forall (well_typed_block g_sig num_blks) g_blks /\
-      str_wf (List.map snd g_sig) g_str /\
+      str_wf g_sig g_str /\
       match g_ptr with
       | Some n => n < num_blks
       | None => True
       end.
 
   Lemma Forall2_access_record : forall A B vl tl attr t (P : A -> B -> Prop),
-      Forall2 (fun vp tp => fst vp = fst tp) vl tl ->
-      Forall2 (fun vp tp => P (snd vp) (snd tp)) vl tl ->
+      Forall2 (fun tp vp => P (snd vp) (snd tp)) tl vl ->
+      map fst tl = map fst vl ->
       access_record tl attr = Success t ->
       match access_record vl attr with
       | Success v => P v t
@@ -535,11 +529,11 @@ Section WithMap.
   Proof.
     induction 1; cbn; intros; try discriminate.
     do 2 destruct_match_hyp;
-    invert_Forall2; case_match; cbn in *; subst.
+    invert_cons; case_match; cbn in *; subst.
     1:{ rewrite String.eqb_eq in *.
         do_injection. rewrite String.eqb_refl.
         assumption. }
-    1:{ rewrite_asm. apply IHForall2 in H8; auto. }
+    1:{ rewrite_asm. apply IHForall2 in H5; auto. }
   Qed.
 
   Lemma tenv_wf_step : forall G t, tenv_wf G -> type_wf t -> forall x, tenv_wf (map.put G x t).
@@ -574,23 +568,44 @@ Section WithMap.
     unfold venv_wf; intros. rewrite map.get_empty in *; congruence.
   Qed.
 
-  Lemma type_of_aexpr__type_wf : forall Gstore Genv a t,
-      type_of_aexpr Gstore Genv a t ->
-      tenv_wf Gstore -> tenv_wf Genv ->
+  Lemma type_of_aexpr__type_wf : forall g_sig Genv a t,
+      type_of_aexpr g_sig Genv a t ->
+      sig_wf g_sig -> tenv_wf Genv ->
       type_wf t.
   Proof.
     induction 1; try now constructor.
     all: try (intros; destruct t; cbn in *; intuition idtac; constructor).
-    intros. apply IHtype_of_aexpr2; eauto using tenv_wf_step.
+    (* intros. apply IHtype_of_aexpr2; eauto using tenv_wf_step. *)
   Qed.
 
-  Lemma type_of_expr__type_wf : forall Gstore e t,
-      type_of_expr Gstore e t ->
-      tenv_wf Gstore ->
+  Lemma access_record_Forall_snd : forall A l x (a : A) P,
+      access_record l x = Success a ->
+      Forall P (map snd l) ->
+      P a.
+  Proof.
+    induction l; cbn; try discriminate.
+    intros; repeat destruct_match_hyp; cbn in *; invert_Forall.
+    1:{ do_injection. assumption. }
+    1:{ eapply IHl; eauto. }
+  Qed.
+
+  Lemma type_of_expr__type_wf : forall g_sig e t,
+      type_of_expr g_sig e t ->
+      sig_wf g_sig ->
       type_wf t.
   Proof.
     induction 1; eauto using type_of_aexpr__type_wf, tenv_wf_empty.
     1: constructor; auto.
+    all: unfold sig_wf in *; intuition idtac.
+    1:{ lazymatch goal with
+        H: access_record _ _ = _ |- _ =>
+          eapply access_record_Forall_snd in H
+      end; eauto.
+        lazymatch goal with
+          H: type_wf (_ ?t) |- type_wf ?t =>
+            inversion H; subst
+        end. assumption. }
+    1:{ constructor; auto. }
     all: lazymatch goal with
            H: type_of_rexpr _ _ _ _ |- _ =>
              inversion H; subst
@@ -620,18 +635,26 @@ Section WithMap.
           eapply IH in H as H'; eauto; inversion H'; subst; clear IH
     end.
 
-  Lemma aexpr_type_sound : forall Gstore Genv e t,
-      type_of_aexpr Gstore Genv e t ->
-      tenv_wf Gstore -> tenv_wf Genv ->
-      forall store env,
-      venv_wf Gstore store ->
+  Ltac apply_Forall2_access_record :=
+    lazymatch goal with
+      H: access_record _ _ = Success _ |- _ =>
+        eapply Forall2_access_record in H
+    end.
+
+  Lemma aexpr_type_sound : forall g_sig Genv e t,
+      type_of_aexpr g_sig Genv e t ->
+      sig_wf g_sig -> tenv_wf Genv ->
+      forall g_str env,
+      str_wf g_sig g_str ->
       venv_wf Genv env ->
-      type_of_value (interp_aexpr store env e) t.
+      type_of_value (interp_aexpr g_str env e) t.
   Proof.
     induction 1; intros; cbn; try constructor.
-    1,2: apply_venv_wf; case_match; intuition fail.
-    1:{ aexpr_type_sound_IH; eauto using tenv_wf_step, venv_wf_step.
-        apply tenv_wf_step; eauto using type_of_aexpr__type_wf. }
+    1:{ unfold str_wf in *; intuition idtac.
+        apply_Forall2_access_record; eauto.
+        case_match; intuition fail. }
+    (* 1:{ aexpr_type_sound_IH; eauto using tenv_wf_step, venv_wf_step.
+        apply tenv_wf_step; eauto using type_of_aexpr__type_wf. } *)
     all: repeat aexpr_type_sound_IH; try constructor.
     1:{ lazymatch goal with
         H: venv_wf ?Genv _, H': map.get ?Genv _ = _ |- _ =>
@@ -658,7 +681,7 @@ Section WithMap.
   Ltac invert_type_of_value :=
     lazymatch goal with
       H: type_of_value _ _ |- _ =>
-        inversion H; subst
+        inversion H; subst; clear H
     end.
 
   Lemma Forall2_map_l : forall A B C P (f : A -> B) l (l' : list C),
@@ -667,23 +690,21 @@ Section WithMap.
     induction 1; cbn; auto.
   Qed.
 
-  Lemma rexpr_type_sound : forall Gstore Genv e t store env,
-      type_of_rexpr Gstore Genv e t ->
-      tenv_wf Gstore -> tenv_wf Genv ->
-      venv_wf Gstore store -> venv_wf Genv env ->
-      type_of_value (VRecord (interp_rexpr store env e)) t.
+  Lemma rexpr_type_sound : forall g_sig Genv e t g_str env,
+      type_of_rexpr g_sig Genv e t ->
+      sig_wf g_sig -> tenv_wf Genv ->
+      str_wf g_sig g_str -> venv_wf Genv env ->
+      type_of_value (VRecord (interp_rexpr g_str env e)) t.
   Proof.
     destruct 1; cbn; intros.
     remember (record_sort el) as l.
     constructor.
-    1:{ eapply Forall2_map_l.
-        clear Heql H.
-        induction H0; constructor; invert_Forall2; auto.
-        destruct x; cbn; auto. }
-    1:{ eapply Forall2_map_l.
-        clear Heql H.
-        induction H0; constructor; invert_Forall2; auto.
-        destruct x; cbn in *; auto.
+    1:{ rewrite map_map. revert H0. clear.
+        induction 1; cbn; auto.
+        case_match; cbn in *. congruence. }
+    1:{ revert H1. clear Heql H H0.
+        induction 1; cbn; constructor; auto.
+        case_match; cbn in *; auto;
         eapply aexpr_type_sound; eauto. }
   Qed.
 
@@ -706,33 +727,45 @@ Section WithMap.
 
   Ltac apply_type_sound_IH :=
     lazymatch goal with
-      IH: context[type_of_value (interp_expr _ ?e) _],
-        H: venv_wf _ _ |-
+    | IH: context[_ -> type_of_value (_ _ ?e) _] |- type_of_value (_ _ ?e) _ =>
+        eapply IH; eauto
+    | IH: context[type_of_value (interp_expr _ ?e) _],
+        H: str_wf _ _ |-
         context[interp_expr _ ?e] =>
         let H' := fresh "H'" in
-        apply IH in H as H'; auto;
-        inversion H'; subst
+        eapply IH in H as H'; eauto
     end.
 
-  Theorem type_sound : forall Gstore e t store,
-      type_of_expr Gstore e t ->
-      tenv_wf Gstore ->
-      venv_wf Gstore store ->
-      type_of_value (interp_expr store e) t.
+  Theorem type_sound : forall e g_sig t g_str,
+      type_of_expr g_sig e t ->
+      sig_wf g_sig ->
+      str_wf g_sig g_str ->
+      type_of_value (interp_expr g_str e) t.
   Proof.
-    induction 1; cbn; intros.
+    induction e; cbn; intros;
+      lazymatch goal with
+       H: context[type_of_expr] |- _ =>
+         inversion H; subst
+      end.
     1:{ eapply aexpr_type_sound; eauto using tenv_wf_empty, venv_wf_empty. }
-    1:{ apply_venv_wf. case_match; intuition fail. }
+    1:{ unfold sig_wf, str_wf in *; intuition idtac.
+        apply_Forall2_access_record; eauto.
+        case_match; intuition fail. }
+    (* 1:{ apply_type_sound_IH.
+        1:{ apply tenv_wf_step; auto.
+            eapply type_of_expr__type_wf; eauto. }
+        apply venv_wf_step; auto.
+        apply_type_sound_IH. } *)
     1:{ constructor; auto. }
-    1:{ apply_type_sound_IH. constructor.
+    1:{ apply_type_sound_IH. invert_type_of_value. constructor.
         rewrite Forall_forall; intros ? H_in.
         apply set_insert_incl in H_in; intuition subst.
         2: apply_Forall_In.
         eapply rexpr_type_sound; eauto using tenv_wf_step, tenv_wf_empty, venv_wf_empty. }
-    1:{ apply_type_sound_IH. constructor.
+    1:{ apply_type_sound_IH.  invert_type_of_value. constructor.
         eapply incl_Forall; try eassumption.
         apply incl_filter. }
-    1:{ repeat apply_type_sound_IH. constructor.
+    1:{ repeat (apply_type_sound_IH; invert_type_of_value). constructor.
         erewrite <- Permuted_value_sort.
         rewrite Forall_flat_map.
         rewrite Forall_forall; intros.
@@ -742,7 +775,7 @@ Section WithMap.
         eapply rexpr_type_sound; eauto.
         1: prove_tenv_wf.
         1: prove_venv_wf. }
-    1:{ apply_type_sound_IH. constructor.
+    1:{ apply_type_sound_IH. invert_type_of_value. constructor.
         erewrite <- Permuted_value_sort.
         rewrite Forall_map.
         rewrite Forall_forall; intros.
@@ -761,41 +794,7 @@ Section WithMap.
           rewrite_map_get_put_hyp.
         do_injection. intuition fail. }
   Qed.
-(* ??? remove
-  Lemma Forall2_get_mk_venv : forall A B P (l : list A) (l' : list (string * B)) f x y,
-      Forall2 P l (List.map snd l') ->
-      NoDup (List.map fst l') ->
-      In (x, y) l' ->
-      exists z, map.get (mk_venv (List.map fst l') (List.map f l)) x = Some (f z) /\ P z y.
-  Proof.
-    intros * H. remember (List.map snd l') as sl'.
-    generalize dependent l'.
-    induction H; intros.
-    1:{ destruct l'; try discriminate.
-        apply_in_nil. intuition fail. }
-    1:{ destruct l'; try discriminate.
-        1:{ invert_Forall2.
-            repeat (destruct l'0; try discriminate; []).
-            cbn in *.
-            intuition idtac; subst; cbn in *.
-            invert_cons. rewrite_map_get_put_goal.
-            eexists; eauto. }
-        1:{ invert_Forall2.
-            destruct l'0; try discriminate; cbn in *.
-            invert_cons. invert_NoDup.
-            intuition idtac; subst; cbn in *.
-            1:{ rewrite_map_get_put_goal.
-                eexists; eauto. }
-            1:{ destruct p; cbn in *.
-                rewrite_map_get_put_goal.
-                intro contra; subst.
-                lazymatch goal with
-                  H: In _ _ |- _ =>
-                    apply in_map with (f := fst) in H
-                end.
-                intuition fail. } } }
-  Qed.
-*)
+
   Lemma tenv_wf_mk_tenv : forall l,
       Forall type_wf (List.map snd l) ->
       tenv_wf (mk_tenv l).
@@ -821,13 +820,13 @@ Section WithMap.
       H: map.get _ _ = _ |- _ =>
         rewrite H
     end.
-  Lemma block_step_type_sound : forall num_blks sig store store' m blk,
+  Lemma block_step_type_sound : forall num_blks sig g_str g_str' m blk,
       well_typed_block sig num_blks blk ->
-      venv_wf (mk_tenv sig) store ->
-      block_step sig store blk store' m ->
+      venv_wf (mk_tenv sig) g_str ->
+      block_step sig g_str blk g_str' m ->
       NoDup (List.map fst sig) ->
       Forall type_wf (List.map snd sig) ->
-      venv_wf (mk_tenv sig) store'.
+      venv_wf (mk_tenv sig) g_str'.
   Proof.
     induction 1; intros.
     all: lazymatch goal with
@@ -849,46 +848,62 @@ Section WithMap.
   Qed.
  *)
 
-  Lemma sig_wf__tenv_wf : forall g_sig,
-      sig_wf g_sig -> tenv_wf (mk_tenv g_sig).
+  Lemma Forall2_snd_combine : forall A (l1 : list (A * type)) (l2 : list A) l3,
+      length l2 = length l3 ->
+      Forall2 (fun tp vp => type_of_value (snd vp) (snd tp)) l1 (combine l2 l3) <->
+        Forall2 (fun tp vp => type_of_value vp (snd tp)) l1 l3.
   Proof.
-    unfold sig_wf; intuition idtac.
-    induction g_sig; cbn; auto using tenv_wf_empty.
-    case_match; cbn in *.
-    invert_NoDup. invert_Forall.
-    intuition auto using tenv_wf_step.
+    induction l1; split; intros; invert_Forall2;
+      destruct l2; try destruct l3; try discriminate;
+      auto; cbn in *.
+    1:{ constructor; invert_cons; auto.
+        eapply IHl1; eauto. }
+    1:{ constructor; cbn; auto.
+        rewrite IHl1; auto. }
   Qed.
 
-  Lemma venv_wf__mk_env : forall g_str g_sig,
-      Forall2 type_of_value g_str (map snd g_sig) ->
-      venv_wf (mk_tenv g_sig) (mk_venv (List.map fst g_sig) g_str).
+  Lemma Forall2_map_r: forall A B C P (f : C -> B) (l : list A) (l' : list C),
+      Forall2 (fun (x : A) (y : C) => P x (f y)) l l' ->
+      Forall2 P l (map f l').
   Proof.
-    induction g_str; intros; invert_Forall2;
-      destruct g_sig; try discriminate.
-    1:{ apply venv_wf_empty. }
-    1:{ cbn in *. case_match.
-        cbn in *; invert_cons.
-        repeat apply venv_wf_step; auto. }
+    induction 1; cbn; auto.
   Qed.
 
-  Lemma block_type_sound : forall sig num_blks blk str str' m,
-      block_step (List.map fst sig) str blk str' m ->
-      well_typed_block sig num_blks blk ->
-      sig_wf sig ->
-      str_wf (List.map snd sig) str ->
-      str_wf (List.map snd sig) str'.
+  Ltac apply_Forall2_length :=
+    lazymatch goal with
+      H: Forall2 _ _ _ |- _ =>
+        apply Forall2_length in H
+    end.
+
+  Lemma block_type_sound : forall g_sig num_blks blk g_str g_str' m,
+      block_step (List.map fst g_sig) g_str blk g_str' m ->
+      well_typed_block g_sig num_blks blk ->
+      sig_wf g_sig ->
+      str_wf g_sig g_str ->
+      str_wf g_sig g_str'.
   Proof.
     unfold sig_wf, str_wf; induction 1; subst; intros; auto.
     all: lazymatch goal with
-        H: context[well_typed_block] |- _ =>
-          inversion H; subst
-         end;
-      unfold store in *;
-      apply Forall2_map_l;
-      eapply Forall2_impl; eauto;
-      cbn; intros;
-      eapply type_sound;
-      eauto using sig_wf__tenv_wf, venv_wf__mk_env.
+           H: context[well_typed_block] |- _ =>
+             inversion H; subst
+         end.
+    all: split;
+      [ rewrite List.map_combine_fst; auto;
+        repeat apply_Forall2_length;
+        rewrite !length_map in *; congruence
+      | eapply Forall2_impl; eauto;
+        cbn; intros;
+        [ lazymatch goal with
+            H: _ ?a ?b |- _ (snd ?b) (snd ?a) =>
+              apply H
+          end | ];
+        erewrite Forall2_snd_combine;
+        [ | repeat apply_Forall2_length;
+            rewrite !length_map; congruence ];
+        apply Forall2_map_r;
+        eapply Forall2_impl; eauto;
+        cbn; intros; eapply type_sound;
+        unfold sig_wf, str_wf; eauto ].
   Qed.
 
   Lemma well_typed_block__ptr_in_range : forall g_sig num_blks g_str g_str' blk ptr,
@@ -950,12 +965,12 @@ Section WithMap.
     destruct_match_hyp; intuition idtac.
     eapply lt_length__nth_error in H4; destruct_exists.
     intuition idtac. destruct x.
-    1:{ exists {| str:=map (interp_expr (mk_venv (map fst g_s.(sig)) g_d.(str))) asgns; ptr:=Some next_blk |}.
+    1:{ exists {| str:=combine (map fst g_s.(sig)) (map (interp_expr g_d.(str)) asgns); ptr:=Some next_blk |}.
         econstructor; eauto. cbn.
         constructor; trivial. }
-    1:{ destruct (interp_pexpr (mk_venv (map fst g_s.(sig)) g_d.(str)) map.empty e) eqn:Ep;
-        [ exists {| str:=map (interp_expr (mk_venv (map fst g_s.(sig)) g_d.(str))) asgns1; ptr:=Some next_blk1 |}
-          | exists {| str:=map (interp_expr (mk_venv (map fst g_s.(sig)) g_d.(str))) asgns2; ptr:=Some next_blk2 |} ];
+    1:{ destruct (interp_pexpr g_d.(str) map.empty e) eqn:Ep;
+        [ exists {| str:=combine (map fst g_s.(sig)) (map (interp_expr g_d.(str)) asgns1); ptr:=Some next_blk1 |}
+          | exists {| str:=combine (map fst g_s.(sig)) (map (interp_expr g_d.(str)) asgns2); ptr:=Some next_blk2 |} ];
         econstructor; eauto; cbn;
         constructor; trivial. }
     1:{ exists {| str:=g_d.(str); ptr:=None |}.
