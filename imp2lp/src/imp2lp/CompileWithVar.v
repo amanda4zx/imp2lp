@@ -1384,6 +1384,57 @@ Section __.
           repeat f_equal. eapply obj_eqb_iff_value_eqb; eauto. }
     Qed.
 
+    Lemma lower_rexpr_asms_hold : forall g_sig Genv r r' asms tl' t ts g_str env ctx rls,
+      lower_rexpr g_sig Genv r = (r', asms, tl') ->
+      type_of_rexpr g_sig Genv r t ->
+      context_wf ts g_sig g_str Genv env ctx ->
+      venv_is_lowered_to_at g_str rls ts ->
+      str_wf g_sig g_str ->
+      Forall
+        (fun asm : fact =>
+           exists asm' : rel * list obj,
+             interp_fact ctx asm asm' /\ prog_impl_fact rls asm')
+        asms.
+    Proof.
+      inversion 2; subst; cbn in *.
+      invert_pair. remember (record_sort el) as l.
+      lazymatch goal with
+        H1: context[type_of_rexpr], H2: l = _ |- _ =>
+          clear H1 H2
+      end.
+      invert_type_wf. rewrite Forall_concat.
+      induction H2; cbn in *; auto; intros.
+      invert_Forall2; invert_Forall; invert_NoDup; invert_SSorted.
+      case_match. constructor; auto.
+      eapply lower_aexpr_asms_hold; eauto.
+      apply surjective_pairing.
+    Qed.
+
+    Lemma lower_rexpr_complete : forall g_sig Genv r r' asms tl' t ts g_str env ctx rls,
+        lower_rexpr g_sig Genv r = (r', asms, tl') ->
+        type_of_rexpr g_sig Genv r t ->
+        context_wf ts g_sig g_str Genv env ctx ->
+        venv_is_lowered_to_at g_str rls ts ->
+        str_wf g_sig g_str ->
+        venv_wf Genv env ->
+        sig_wf g_sig ->
+        tenv_wf Genv ->
+        Forall2 (Datalog.interp_expr ctx) r' (map lower_atomic_value (map snd (interp_rexpr g_str env r))).
+    Proof.
+      inversion 2; subst; cbn in *.
+      invert_pair. remember (record_sort el) as l.
+      lazymatch goal with
+        H1: context[type_of_rexpr], H2: l = _ |- _ =>
+          clear H1 H2
+      end.
+      invert_type_wf.
+      induction H2; cbn in *; auto; intros.
+      invert_Forall2; invert_Forall; invert_NoDup; invert_SSorted.
+      case_match; cbn. constructor; auto.
+      eapply lower_aexpr_complete; eauto.
+      apply surjective_pairing.
+    Qed.
+
     Lemma construct_hyps_interp : forall (ctx : context) P hyps,
         Forall (fun hyp => exists hyp', interp_fact (rel:=rel) ctx hyp hyp' /\ P hyp') hyps ->
         exists hyps', Forall2 (interp_fact ctx) hyps hyps' /\ Forall P hyps'.
@@ -1471,6 +1522,35 @@ Section __.
       apply incl_refl.
     Qed.
 
+    Ltac apply_type_sound :=
+      lazymatch goal with
+        H: type_of_expr _ _ _ |- _ =>
+          let H_v := fresh "H_v" in
+          eapply type_sound in H as H_v
+      end.
+
+    Ltac prove_interp_expr_attr_vars :=
+      subst; rewrite_asm;
+      rewrite <- List.Forall2_map_l, <- List.Forall2_map_r;
+      erewrite length_eq_Forall2_combine;
+      [ | rewrite !length_map; reflexivity ];
+      rewrite combine_map_fst_map_snd;
+      rewrite Forall_forall; intros;
+      case_match; constructor;
+      rewrite get_atomic_wf_context_attr_var;
+      apply In_get_mk_context_attr_var; auto;
+      lazymatch goal with
+        H: context[type_of_expr] |- _ =>
+          apply type_of_expr__type_wf in H
+      end; auto;
+      repeat invert_type_wf; rewrite_l_to_r; assumption.
+
+    Ltac apply_incl :=
+      lazymatch goal with
+        H: incl _ _ |- _ =>
+          apply H
+      end.
+
     Lemma lower_expr_complete : forall e hyps b out next_rel e_dcls e_rls rls next_rel' tl t g_sig g_str ts,
         lower_expr g_sig hyps b out next_rel e = (e_dcls, e_rls, next_rel', tl) ->
         type_of_expr g_sig e t ->
@@ -1541,84 +1621,82 @@ Section __.
           destruct_exists.
           econstructor.
           1:{ rewrite Exists_exists; eexists; intuition idtac.
-              1: lazymatch goal with
-                   H: incl _ _ |- _ =>
-                     apply H; left
-                 end; reflexivity.
+              1: apply_incl; left; reflexivity.
               econstructor. repeat eexists; repeat econstructor;
                 repeat rewrite_asm; eauto.
               1:{ subst.
                   case_match; repeat econstructor; cbn.
                   1,3: try rewrite Z.add_0_r; apply get_wf_context_time_var; unfold str_wf; auto.
                   1: reflexivity. }
-              1:{ subst; rewrite_asm.
-                  rewrite <- List.Forall2_map_l, <- List.Forall2_map_r.
-                  erewrite length_eq_Forall2_combine.
-                  2: rewrite !length_map; reflexivity.
-                  rewrite combine_map_fst_map_snd;
-                  rewrite Forall_forall; intros;
-                  case_match; constructor;
-                  rewrite get_atomic_wf_context_attr_var.
-                  apply In_get_mk_context_attr_var; auto.
-                  lazymatch goal with
-                    H: context[type_of_expr] |- _ =>
-                      apply type_of_expr__type_wf in H
-                  end; auto.
-                  repeat invert_type_wf. rewrite_l_to_r. assumption. }
+              1:{ prove_interp_expr_attr_vars. }
               1:{ instantiate(1:=Zobj ts). subst.
                   apply get_wf_context_time_var; unfold str_wf; auto. }
               1:{ instantiate (1:=map lower_atomic_value (map snd vl)).
-                  subst; rewrite_asm.
-                  rewrite <- List.Forall2_map_l, <- List.Forall2_map_r.
-                  erewrite length_eq_Forall2_combine.
-                  2: rewrite !length_map; reflexivity.
-                  rewrite combine_map_fst_map_snd;
-                  rewrite Forall_forall; intros.
-                  case_match; constructor.
-                  rewrite get_atomic_wf_context_attr_var.
-                  apply In_get_mk_context_attr_var; auto.
-                  lazymatch goal with
-                    H: context[type_of_expr] |- _ =>
-                      apply type_of_expr__type_wf in H
-                  end; auto.
-                  repeat invert_type_wf. rewrite_l_to_r. assumption. } }
+                  prove_interp_expr_attr_vars. } }
           1:{ cbn; constructor; try apply Forall_app; intuition auto.
               subst. assumption. } }
       (* EInsert *)
-      1:{ lazymatch goal with
-          H: type_of_expr _ _ _ |- _ =>
-            eapply type_sound in H as H_v
-        end; eauto; invert_type_of_value; cbn.
+      1:{ apply_type_sound; eauto; invert_type_of_value; cbn.
           rewrite Forall_map.
           eapply incl_Forall.
           1: apply set_insert_incl2.
           constructor.
-          1:{ admit. }
-          1:{
-            (* assert_exists_hyps' ctx rls hyps. *)
-            apply get_rexpr_type_correct in H7 as Hr'.
-            rewrite Hr' in *; clear Hr'.
-            inversion H7; subst.
-
-            lazymatch goal with
-              IH: context[type_of_expr _ _ _ -> _],
-                H: type_of_expr _ _ _ |- _ =>
-                eapply IH in H
-            end; eauto using List.incl_app_bw_l.
+          1:{ cbn.
+              remember (mk_atomic_wf_context map.empty ts g_sig g_str) as ctx.
+              assert_exists_hyps' ctx rls hyps.
+              { prove_exists_hyps'. }
+              assert_exists_hyps' ctx rls l1.
+              { apply construct_hyps_interp.
+                eapply lower_rexpr_asms_hold; eauto.
+                subst. apply mk_atomic_wf_context_wf; auto. }
+              repeat destruct_exists; intuition idtac; econstructor.
+              1:{ rewrite Exists_exists; eexists; intuition idtac.
+                  1:{ apply_incl. rewrite in_app_iff; right.
+                      left; reflexivity. }
+                  repeat econstructor; cbn.
+                  1:{ instantiate(1:=ctx); subst.
+                      case_match; repeat econstructor; try rewrite Z.add_0_r; eauto using get_wf_context_time_var. }
+                  1:{ subst; eapply lower_rexpr_complete; eauto using tenv_wf_empty, venv_wf_empty, mk_atomic_wf_context_wf. }
+                  1:{ apply Forall2_app; eauto. } }
+              1:{ cbn; rewrite app_nil_r.
+                  apply Forall_app. intuition auto. } }
+          1:{ lazymatch goal with
+              H: type_of_rexpr _ _ _ _ |- _ =>
+                apply get_rexpr_type_correct in H as Hr;
+                rewrite Hr in *; clear Hr;
+                inversion H; subst
+            end.
+              lazymatch goal with
+                IH: context[type_of_expr _ _ _ -> _],
+                  H: type_of_expr _ _ _ |- _ =>
+                  eapply IH in H
+              end; eauto using List.incl_app_bw_l.
               unfold is_lowered_to_at in *.
               rewrite <- H in *; cbn in *.
               rewrite Z.add_0_r, Forall_map in *.
               rewrite Forall_forall; intros; apply_Forall_In.
               apply_Forall_In; invert_type_of_value.
+              remember (mk_atomic_wf_context (mk_context map.empty (map attr_var (map fst vl)) (map lower_atomic_value (map snd vl))) ts g_sig g_str) as ctx.
+              assert_exists_hyps' ctx rls hyps.
+              { prove_exists_hyps'. }
+              destruct_exists; intuition idtac.
               econstructor.
               1:{ rewrite Exists_exists; eexists; split.
-                  1:{ lazymatch goal with
-                      H: incl _ _ |- _ =>
-                        apply H
-                    end. rewrite in_app_iff; right.
+                  1:{ apply_incl. rewrite in_app_iff; right.
                       right. left. reflexivity. }
                   econstructor; repeat eexists; repeat constructor; cbn.
-
+                  1:{ instantiate(1:=ctx); subst.
+                      case_match; repeat econstructor; try rewrite Z.add_0_r; auto using get_wf_context_time_var. }
+                  1: prove_interp_expr_attr_vars.
+                  1:{ instantiate(1:=Zobj ts).
+                      subst; auto using get_wf_context_time_var. }
+                  1:{ instantiate(1:=map lower_atomic_value (map snd vl)).
+                      prove_interp_expr_attr_vars. }
+                  1: eauto. }
+              1:{ cbn; rewrite app_nil_r; repeat constructor; auto. } } }
+      (* EFilter *)
+      1:{ apply_type_sound; eauto.
+          invert_type_of_value.
 
     Admitted.
 
