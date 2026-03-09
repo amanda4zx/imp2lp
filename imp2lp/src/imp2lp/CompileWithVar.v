@@ -298,20 +298,9 @@ Section __.
               List.map (fun '(s, a) => (s, lower_type (get_aexpr_type g_sig Genv a))) (record_sort l))
         end.
 
-      Fixpoint mk_vars (name : string) (attrs : list string) : list var :=
-        match attrs with
-        | [] => []
-        | attr :: attrs => access_var (name, attr) :: (mk_vars name attrs)
-        end.
+      Definition mk_vars (name : string) (tl : list (string * type)) : list var :=
+        map (fun '(attr, _) => access_var (name, attr)) tl.
 
-      (* ??? remove
-      Fixpoint put_attr_bindings (m : attrenv) (x : string) (attrs : list string) (vars : list var) : attrenv :=
-        match attrs, vars with
-        | [], _ | _, [] => m
-        | attr :: attrs, v :: vars =>
-            map.put (put_attr_bindings m x attrs vars) (x, attr) v
-        end.
-*)
       Definition lower_rec_type : list (string * type) -> list (string * dtype) :=
         List.map (fun '(s, t) => (s, lower_type t)).
     End WithTimestamp.
@@ -387,7 +376,7 @@ Section __.
                         | TSet (TRecord tl) => tl
                         | _ => []
                         end in
-              let vars := mk_vars x (List.map fst tl) in
+              let vars := mk_vars x tl in
               let p_asms := List.map lower_pexpr p in
               let ps' := List.map fst p_asms in
               let asms := List.concat (List.map snd p_asms) in
@@ -417,8 +406,8 @@ Section __.
                          | TSet (TRecord tl2) => tl2
                          | _ => []
                          end in
-              let vars1 := mk_vars x1 (List.map fst tl1) in
-              let vars2 := mk_vars x2 (List.map fst tl2) in
+              let vars1 := mk_vars x1 tl1 in
+              let vars2 := mk_vars x2 tl2 in
               let vs1 := List.map var_expr vars1 in
               let vs2 := List.map var_expr vars2 in
               let p_asms := List.map lower_pexpr p in
@@ -448,7 +437,7 @@ Section __.
                         | TSet (TRecord tl) => tl
                         | _ => []
                         end in
-              let vars := mk_vars x (List.map fst attr_tys) in
+              let vars := mk_vars x tl in
               let Genv := map.put map.empty x (TRecord tl) in
               let '(r', asms, out_attr_tys) := lower_rexpr g_sig Genv r in
               let vs := List.map var_expr vars in
@@ -967,7 +956,7 @@ Section __.
       match t with
       | TRecord tl
       | TSet (TRecord tl) =>
-          map (fun '(attr, _) => access_var (x, attr)) tl
+          mk_vars x tl
       | _ => [ singleton_var x ]
       end.
 (*
@@ -1218,6 +1207,7 @@ Section __.
           repeat invert_Exists.
           apply_Forall2_access_record; eauto.
           destruct_match_hyp; intuition idtac.
+          unfold mk_vars in *.
           rewrite <- List.Forall2_map_l, <- !List.Forall2_map_r in *.
           eapply Forall2_access_record_same in H10; eauto.
           constructor; assumption. }
@@ -1239,7 +1229,7 @@ Section __.
           else mk_atomic_wf_context m ts g_sig g_str
       end.
 
-    Lemma get_wf_context_time_var : forall m ts g_sig g_str,
+    Lemma get_atomic_wf_context_time_var : forall m ts g_sig g_str,
         str_wf g_sig g_str ->
         map.get (mk_atomic_wf_context m ts g_sig g_str) time_var = Some (Zobj ts).
     Proof.
@@ -1251,6 +1241,11 @@ Section __.
       all: apply IHg_sig; cbn in *; invert_cons;
         intuition fail.
     Qed.
+
+    Lemma put_mk_vars_get_time_var : forall m x tl vl,
+        map.get (mk_context m (mk_vars x tl) vl) time_var = map.get m time_var.
+    Proof.
+    Admitted.
 
     Lemma is_atomic_type_com_false_iff : forall t,
         is_atomic_type_com t = false <-> ~is_atomic_type t.
@@ -1551,6 +1546,181 @@ Section __.
           apply H
       end.
 
+    Lemma atomic_wf_context_step : forall x tl vl m ts g_sig g_str,
+        context_wf ts g_sig g_str map.empty map.empty m ->
+          context_wf ts g_sig g_str map.empty map.empty (mk_context m (mk_vars x tl) vl).
+    Proof.
+      induction tl; cbn; auto; intros.
+      case_match; auto. case_match.
+      apply IHtl. unfold context_wf in *; intuition idtac.
+      1: rewrite_map_get_put_goal.
+      1:{ eapply H in H4 as H'; eauto.
+          rewrite Exists_exists in *.
+          destruct_exists.
+          eexists; intuition eauto.
+          rewrite vars_of_atomic in *; auto.
+          repeat invert_Forall2. repeat constructor.
+          rewrite_map_get_put_goal. }
+      1:{ rewrite map.get_empty in *; discriminate. }
+    Qed.
+
+    Lemma neq_vars_mk_vars_disjoint : forall x1 x2 z tl1 tl2,
+        ~x1 = x2 -> In z (mk_vars x1 tl1) -> ~In z (mk_vars x2 tl2).
+    Proof.
+      induction tl1; cbn; auto; intros.
+      destruct_match_hyp; intuition subst.
+      2: eapply IHtl1; eauto.
+      induction tl2; auto.
+      cbn in *; destruct_match_hyp; intuition subst.
+      do_injection. congruence.
+    Qed.
+
+    Lemma neq_vars_not_In : forall x1 x2 z t tl2,
+        ~x1 = x2 -> In z (vars_of x1 t) -> ~In z (mk_vars x2 tl2).
+    Proof.
+      destruct t; cbn; intuition subst.
+      all: try (induction tl2; cbn in *; auto;
+                destruct_match_hyp; intuition discriminate).
+      1: eapply neq_vars_mk_vars_disjoint; eauto.
+      1:{ destruct_match_hyp.
+          all: try (destruct_In; induction tl2; cbn in *; auto;
+                    destruct_match_hyp; intuition discriminate).
+          eapply neq_vars_mk_vars_disjoint; eauto. }
+    Qed.
+
+    Lemma In_access_var_mk_vars_In_map_fst : forall x s tl,
+        In (access_var (x, s)) (mk_vars x tl) -> In s (map fst tl).
+    Proof.
+      induction tl; cbn; auto.
+      case_match; intuition cbn.
+      do_injection. left; trivial.
+    Qed.
+
+    Lemma get_mk_context_access_rec : forall vl tl,
+        type_of_value (VRecord vl) (TRecord tl) ->
+        type_wf (TRecord tl) ->
+        forall m x,
+          Forall2 (fun x' v' =>
+                     map.get
+                       (mk_context m (mk_vars x tl)
+                          (map lower_atomic_value (map snd vl)))
+                       x' =
+                       Some v')
+            (mk_vars x tl)
+            (map lower_atomic_value (map snd vl)).
+    Proof.
+      inversion 1; subst; unfold mk_vars; intro; invert_type_wf.
+      induction H3; auto; cbn; constructor; case_match; cbn in *;
+        invert_NoDup; invert_SSorted; invert_Forall; invert_cons.
+      1:{ rewrite mk_context_get_put_diff.
+          2: intro contra; apply In_access_var_mk_vars_In_map_fst in contra; auto.
+              rewrite_map_get_put_goal. reflexivity. }
+      1:{ apply IHForall2; auto; constructor; auto. }
+    Qed.
+
+    Lemma context_wf_step : forall m ts g_sig g_str Genv env,
+        context_wf ts g_sig g_str Genv env m ->
+        venv_wf Genv env ->
+        forall x tl vl,
+          type_wf (TRecord tl) ->
+          type_of_value (VRecord vl) (TRecord tl) ->
+          context_wf ts g_sig g_str (map.put Genv x (TRecord tl)) (map.put env x (VRecord vl)) (mk_context m (mk_vars x tl) (lower_rec_value (VRecord vl))).
+    Proof.
+      unfold context_wf; intuition idtac.
+      1: rewrite put_mk_vars_get_time_var; assumption.
+      1:{ lazymatch goal with
+          H: context[is_atomic_type _ -> _],
+            H': is_atomic_type _ |- _ =>
+            eapply H in H' as H_new
+        end; eauto.
+          rewrite vars_of_atomic in *; auto.
+          rewrite Exists_exists in *. destruct_exists.
+          eexists; intuition eauto.
+          repeat invert_Forall2. repeat constructor.
+          rewrite mk_context_get_put_diff; auto.
+          lazymatch goal with
+            H1: context[type_of_value], H2: type_wf _ |- _ =>
+              clear H1 H2
+          end.
+          induction tl; cbn; auto.
+          case_match. intuition discriminate. }
+      1:{ destruct (String.eqb x x0) eqn:E;
+          rewrite ?String.eqb_eq, ?String.eqb_neq in *; subst;
+          repeat rewrite_map_get_put_hyp.
+          2:{ eapply H3 in H6; eauto.
+              rewrite Exists_exists in *.
+              destruct_exists. eexists; intuition eauto.
+              eapply List.Forall2_impl_strong; eauto; cbn; intros.
+              rewrite mk_context_get_put_diff; auto.
+              1:{ repeat (do_injection; clear_refl).
+                  invert_type_of_value.
+                  eauto using neq_vars_not_In; eauto. } }
+          repeat (do_injection; clear_refl).
+          cbn; rewrite Exists_exists. eexists; split.
+          1: left; reflexivity.
+          apply get_mk_context_access_rec; auto. }
+    Qed.
+
+    Lemma interp_expr_mk_context_mk_vars : forall tl (vl : list (string * value)),
+        Forall2 (fun tp vp => type_of_value (snd vp) (snd tp)) tl vl ->
+        NoDup (map fst tl) ->
+        forall m x,
+        Forall2 (Datalog.interp_expr (mk_context m (mk_vars x tl) (map lower_atomic_value (map snd vl)))) (map var_expr (mk_vars x tl)) (map lower_atomic_value (map snd vl)).
+    Proof.
+      induction 1; cbn; auto; intros; invert_NoDup.
+      constructor.
+      1:{ econstructor. rewrite mk_context_get_put_diff.
+          1: rewrite_map_get_put_goal; reflexivity.
+          case_match. cbn in *.
+          intro contra. rewrite in_map_iff in contra.
+          destruct_exists; destruct_match_hyp; intuition idtac.
+          do_injection.
+          lazymatch goal with
+            H: In (_, _) _ |- _ =>
+              apply in_map with (f:=fst) in H
+          end. cbn in *; congruence. }
+      1:{ apply IHForall2; auto. }
+      Qed.
+
+    Lemma lower_pexprs_true : forall ctx (rln : rel) ps,
+        Forall (fun p =>
+                  Datalog.interp_expr ctx p (Bobj true)) (map fst (map lower_pexpr ps)) ->
+        Forall2 (interp_fact ctx)
+          (map
+             (fun p' =>
+                {| fact_R := rln; fact_args := [p'] |})
+             (map fst (map lower_pexpr ps)))
+          (map (fun _ => (rln, [Bobj true])) ps).
+    Proof.
+      induction ps; cbn; auto; intros; constructor; invert_Forall; auto.
+      econstructor; cbn; auto.
+    Qed.
+
+    Lemma pexpr_forallb_true : forall ctx ts g_sig g_str Genv env ps,
+        forallb
+          (fun p : pexpr =>
+             interp_pexpr g_str env p)
+          ps = true ->
+        Forall
+          (well_typed_pexpr g_sig Genv)
+          ps ->
+        context_wf ts g_sig g_str Genv env ctx ->
+        str_wf g_sig g_str ->
+        venv_wf Genv env ->
+        sig_wf g_sig ->
+        tenv_wf Genv ->
+        Forall
+          (fun p => Datalog.interp_expr ctx p (Bobj true))
+          (map fst (map lower_pexpr ps)).
+    Proof.
+      induction ps; cbn; auto; intros; constructor; invert_Forall;
+      rewrite andb_true_iff in *; intuition idtac.
+      destruct (lower_pexpr a) eqn:E. cbn.
+      assert (HE : Bobj true = (lower_atomic_value (VBool (interp_pexpr g_str env a)))).
+      { rewrite_asm; reflexivity. }
+      rewrite HE; eapply lower_pexpr_complete; eauto.
+    Qed.
+
     Lemma lower_expr_complete : forall e hyps b out next_rel e_dcls e_rls rls next_rel' tl t g_sig g_str ts,
         lower_expr g_sig hyps b out next_rel e = (e_dcls, e_rls, next_rel', tl) ->
         type_of_expr g_sig e t ->
@@ -1588,10 +1758,10 @@ Section __.
                   case_match.
                   1:{ unfold dexpr_plus_one.
                       repeat econstructor; cbn.
-                      1: apply get_wf_context_time_var.
+                      1: apply get_atomic_wf_context_time_var.
                       all: auto. }
                   constructor.
-                  rewrite Z.add_0_r; auto using get_wf_context_time_var. }
+                  rewrite Z.add_0_r; auto using get_atomic_wf_context_time_var. }
               1: eapply lower_aexpr_complete; eauto using tenv_wf_empty, venv_wf_empty.
               1: instantiate(1:=ts); subst;
               apply mk_atomic_wf_context_wf; auto.
@@ -1626,11 +1796,11 @@ Section __.
                 repeat rewrite_asm; eauto.
               1:{ subst.
                   case_match; repeat econstructor; cbn.
-                  1,3: try rewrite Z.add_0_r; apply get_wf_context_time_var; unfold str_wf; auto.
+                  1,3: try rewrite Z.add_0_r; apply get_atomic_wf_context_time_var; unfold str_wf; auto.
                   1: reflexivity. }
               1:{ prove_interp_expr_attr_vars. }
               1:{ instantiate(1:=Zobj ts). subst.
-                  apply get_wf_context_time_var; unfold str_wf; auto. }
+                  apply get_atomic_wf_context_time_var; unfold str_wf; auto. }
               1:{ instantiate (1:=map lower_atomic_value (map snd vl)).
                   prove_interp_expr_attr_vars. } }
           1:{ cbn; constructor; try apply Forall_app; intuition auto.
@@ -1655,7 +1825,7 @@ Section __.
                       left; reflexivity. }
                   repeat econstructor; cbn.
                   1:{ instantiate(1:=ctx); subst.
-                      case_match; repeat econstructor; try rewrite Z.add_0_r; eauto using get_wf_context_time_var. }
+                      case_match; repeat econstructor; try rewrite Z.add_0_r; eauto using get_atomic_wf_context_time_var. }
                   1:{ subst; eapply lower_rexpr_complete; eauto using tenv_wf_empty, venv_wf_empty, mk_atomic_wf_context_wf. }
                   1:{ apply Forall2_app; eauto. } }
               1:{ cbn; rewrite app_nil_r.
@@ -1686,10 +1856,10 @@ Section __.
                       right. left. reflexivity. }
                   econstructor; repeat eexists; repeat constructor; cbn.
                   1:{ instantiate(1:=ctx); subst.
-                      case_match; repeat econstructor; try rewrite Z.add_0_r; auto using get_wf_context_time_var. }
+                      case_match; repeat econstructor; try rewrite Z.add_0_r; auto using get_atomic_wf_context_time_var. }
                   1: prove_interp_expr_attr_vars.
                   1:{ instantiate(1:=Zobj ts).
-                      subst; auto using get_wf_context_time_var. }
+                      subst; auto using get_atomic_wf_context_time_var. }
                   1:{ instantiate(1:=map lower_atomic_value (map snd vl)).
                       prove_interp_expr_attr_vars. }
                   1: eauto. }
@@ -1697,6 +1867,47 @@ Section __.
       (* EFilter *)
       1:{ apply_type_sound; eauto.
           invert_type_of_value.
+          lazymatch goal with
+            H: type_of_expr _ _ _ |- _ =>
+              apply get_expr_type_correct in H as He;
+              rewrite He in *; clear He;
+              apply type_of_expr__type_wf in H; auto
+          end. repeat invert_type_wf.
+          cbn. rewrite Forall_forall; intros.
+          rewrite in_map_iff in *; destruct_exists;
+            rewrite filter_In in *; intuition idtac.
+          apply_Forall_In. invert_type_of_value.
+          remember (mk_context (mk_atomic_wf_context map.empty ts g_sig g_str) (mk_vars x tl0) (map lower_atomic_value (map snd vl))) as ctx.
+          assert_exists_hyps' ctx rls hyps.
+          { apply construct_hyps_interp.
+            lazymatch goal with
+            | H:context [ context_wf ] |- _ => apply H
+            end. subst. apply atomic_wf_context_step.
+            apply mk_atomic_wf_context_wf; auto. }
+          destruct_exists; intuition idtac.
+          econstructor.
+          1:{ rewrite Exists_exists. eexists; split.
+              1:{ apply_incl. rewrite in_app_iff; right.
+                  left; reflexivity. }
+              1:{ econstructor. repeat eexists; repeat econstructor.
+                  1:{ instantiate (1:=ctx); subst.
+                      case_match; try rewrite Z.add_0_r;
+                        repeat econstructor;
+                        try rewrite put_mk_vars_get_time_var;
+                        auto using get_atomic_wf_context_time_var. }
+                  1:{ subst. cbn.
+                      apply interp_expr_mk_context_mk_vars; auto. }
+                  1:{ instantiate (1:=Zobj ts); subst.
+                      rewrite put_mk_vars_get_time_var;
+                        auto using get_atomic_wf_context_time_var. }
+                  1:{ subst; auto using interp_expr_mk_context_mk_vars. }
+                  1:{ }
+                  1:{ repeat apply Forall2_app; eauto.
+                      1:{ apply lower_pexprs_true.
+                          eapply pexpr_forallb_true; eauto.
+                        admit. }
+                      admit. } } }
+          cbn. admit. }
 
     Admitted.
 
@@ -1836,7 +2047,7 @@ Section __.
                       intuition idtac.
                       1:{ apply H0. do 2 (apply in_or_app; right).
                           left. reflexivity. }
-                      1:{ econstructor. repeat eexists; repeat econstructor; eauto using get_wf_context_time_var.
+                      1:{ econstructor. repeat eexists; repeat econstructor; eauto using get_atomic_wf_context_time_var.
                           1: reflexivity.
                           1:{ eapply lower_pexpr_complete; eauto using tenv_wf_empty, venv_wf_empty, mk_atomic_wf_context_wf. } } }
                   1:{ cbn. repeat constructor;
@@ -1883,7 +2094,7 @@ Section __.
                       intuition idtac.
                       1:{ apply H0. do 2 (apply in_or_app; right).
                           right; left. reflexivity. }
-                      1:{ econstructor. repeat eexists; repeat econstructor; eauto using get_wf_context_time_var.
+                      1:{ econstructor. repeat eexists; repeat econstructor; eauto using get_atomic_wf_context_time_var.
                           1: reflexivity.
                           1:{ eapply lower_pexpr_complete; eauto using tenv_wf_empty, venv_wf_empty, mk_atomic_wf_context_wf. }
                           1: reflexivity. } }
