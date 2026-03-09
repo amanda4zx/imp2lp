@@ -332,12 +332,6 @@ Section WithMap.
 
   Context {tenv : map.map string type} {tenv_ok : map.ok tenv}.
 
-  Fixpoint mk_tenv (ps : list (string * type)) : tenv :=
-    match ps with
-    | [] => map.empty
-    | (x, t) :: ps => map.put (mk_tenv ps) x t
-    end.
-
   Definition tenv_wf (G : tenv) :=
     forall x t, map.get G x = Some t ->
                 type_wf t.
@@ -471,15 +465,13 @@ Section WithMap.
   End WithGsig.
 
   Inductive well_typed_block (sig : list (string * type)) (num_blks : nat) : block -> Prop :=
-  | WTBGoto n es Gstore :
+  | WTBGoto n es :
     n < num_blks ->
-    Gstore = mk_tenv sig ->
     Forall2 (fun tp e => type_of_expr sig e (snd tp)) sig es ->
     well_typed_block sig num_blks (BGoto es n)
-  | WTBIf p n1 es1 n2 es2 Gstore :
+  | WTBIf p n1 es1 n2 es2 :
     n1 < num_blks ->
     n2 < num_blks ->
-    Gstore = mk_tenv sig ->
     well_typed_pexpr sig map.empty p ->
     Forall2 (fun tp e => type_of_expr sig e (snd tp)) sig es1 ->
     Forall2 (fun tp e => type_of_expr sig e (snd tp)) sig es2 ->
@@ -781,70 +773,6 @@ Section WithMap.
         1: prove_tenv_wf.
         1: prove_venv_wf. }
   Qed.
-
-  Lemma get_mk_tenv : forall l x t,
-      map.get (mk_tenv l) x = Some t -> In (x, t) l.
-  Proof.
-    induction l; cbn; intros.
-    1: rewrite map.get_empty in *; discriminate.
-    1:{ destruct_match_hyp; subst.
-        destruct_String_eqb s x;
-          rewrite_map_get_put_hyp.
-        do_injection. intuition fail. }
-  Qed.
-
-  Lemma tenv_wf_mk_tenv : forall l,
-      Forall type_wf (List.map snd l) ->
-      tenv_wf (mk_tenv l).
-  Proof.
-    unfold tenv_wf; intros * ? * H.
-    apply get_mk_tenv in H.
-    apply in_map with (f := snd) in H.
-    apply_Forall_In.
-  Qed.
-(*
-  Ltac rewrite_get_mk_venv :=
-    unfold venv_wf; intros;
-    lazymatch goal with
-      H: map.get (mk_tenv _) _ = _ |- _ =>
-        apply get_mk_tenv in H
-    end;
-    lazymatch goal with
-      H: Forall2 _ ?es _ |- context[?es] =>
-        eapply Forall2_get_mk_venv in H
-    end; eauto;
-    destruct_exists; intuition idtac;
-    lazymatch goal with
-      H: map.get _ _ = _ |- _ =>
-        rewrite H
-    end.
-  Lemma block_step_type_sound : forall num_blks sig g_str g_str' m blk,
-      well_typed_block sig num_blks blk ->
-      venv_wf (mk_tenv sig) g_str ->
-      block_step sig g_str blk g_str' m ->
-      NoDup (List.map fst sig) ->
-      Forall type_wf (List.map snd sig) ->
-      venv_wf (mk_tenv sig) g_str'.
-  Proof.
-    induction 1; intros.
-    all: lazymatch goal with
-           H: context[block_step] |- _ =>
-             inversion H; subst; clear H
-         end; try assumption;
-      rewrite_get_mk_venv;
-      eapply type_sound; eauto using tenv_wf_mk_tenv.
-    Qed.
-
-  Lemma Forall2_In_r : forall A B (P : A -> B -> Prop) l l' x',
-      Forall2 P l l' -> In x' l' ->
-      exists x, In x l /\ P x x'.
-  Proof.
-    induction 1; cbn; intuition idtac; subst.
-    1: eexists; eauto.
-    destruct_exists.
-    exists x0; intuition fail.
-  Qed.
- *)
 
   Lemma Forall2_snd_combine : forall A (l1 : list (A * type)) (l2 : list A) l3,
       length l2 = length l3 ->

@@ -1026,12 +1026,6 @@ Section __.
           inversion H; subst; clear H
       end.
 
-    Ltac apply_get_mk_tenv :=
-      lazymatch goal with
-        H: map.get (mk_tenv _) _ = _ |- _ =>
-          apply get_mk_tenv in H
-      end.
-
     Lemma access_record_Forall : forall A (P : string -> A -> Prop) l x y,
         Forall (fun '(x, y) => P x y) l ->
         access_record l x = Success y ->
@@ -2414,9 +2408,8 @@ Section __.
           repeat eexists; eauto using incl_tran, incl_appr. }
     Qed.
 
-    Theorem lower_cfg_complete' : forall (g : cfg) (g_sig : tenv) (g_d' : cfg_dynamic) dcls rls,
+    Theorem lower_cfg_complete' : forall (g : cfg) (g_d' : cfg_dynamic) dcls rls,
         lower_cfg g = (dcls, rls) ->
-        g_sig = mk_tenv g.(sig_blks).(sig) ->
         well_typed_cfg g ->
         cfg_steps g.(sig_blks) g.(str_ptr) g_d' ->
         let muts := map fst g.(sig_blks).(sig) in
@@ -2490,3 +2483,5 @@ Section __.
     Qed.
   End WithVarenv.
 End __.
+
+Print Assumptions lower_cfg_complete'.
