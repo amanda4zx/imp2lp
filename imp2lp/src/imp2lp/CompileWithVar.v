@@ -763,6 +763,7 @@ Section __.
               1:{ apply IHl in H5.
                   apply_Forall_In. }
               apply incl_tl, incl_refl. }
+          (* ??? Where did these evar come from? *)
           Unshelve. all: apply map.empty. }
     Qed.
 
@@ -1242,10 +1243,14 @@ Section __.
         intuition fail.
     Qed.
 
-    Lemma put_mk_vars_get_time_var : forall m x tl vl,
+    Lemma put_mk_vars_get_time_var : forall tl vl m x,
         map.get (mk_context m (mk_vars x tl) vl) time_var = map.get m time_var.
     Proof.
-    Admitted.
+      unfold mk_vars. induction tl; cbn; auto.
+      intros; case_match; auto.
+      erewrite IHtl. case_match.
+      rewrite_map_get_put_goal.
+    Qed.
 
     Lemma is_atomic_type_com_false_iff : forall t,
         is_atomic_type_com t = false <-> ~is_atomic_type t.
@@ -1644,8 +1649,7 @@ Section __.
           end.
           induction tl; cbn; auto.
           case_match. intuition discriminate. }
-      1:{ destruct (String.eqb x x0) eqn:E;
-          rewrite ?String.eqb_eq, ?String.eqb_neq in *; subst;
+      1:{ destruct_String_eqb x x0;
           repeat rewrite_map_get_put_hyp.
           2:{ eapply H3 in H6; eauto.
               rewrite Exists_exists in *.
@@ -1734,6 +1738,17 @@ Section __.
       apply IHhypss in H3. repeat destruct_exists.
       eexists. intuition idtac; eauto using Forall2_app.
       apply Forall_app; intuition fail.
+    Qed.
+
+    Lemma interp_expr_mk_context_diff : forall m xl xl' vl vl',
+        Forall2 (Datalog.interp_expr m) (map var_expr xl') vl' ->
+        Forall (fun x => ~In x xl) xl' ->
+        Forall2 (Datalog.interp_expr (mk_context m xl vl)) (map var_expr xl') vl'.
+    Proof.
+      induction xl'; cbn; intros; invert_Forall2; auto.
+      constructor; invert_Forall; auto.
+      econstructor. rewrite mk_context_get_put_diff; auto.
+      invert_Datalog_interp_expr; assumption.
     Qed.
 
     Lemma lower_expr_complete : forall e hyps b out next_rel e_dcls e_rls rls next_rel' tl t g_sig g_str ts,
@@ -1887,9 +1902,8 @@ Section __.
             H: type_of_expr _ _ _ |- _ =>
               apply get_expr_type_correct in H as He;
               rewrite He in *; clear He;
-              apply type_of_expr__type_wf in H; auto
+              apply type_of_expr__type_wf in H as H_wf; auto
           end. repeat invert_type_wf.
-          invert_type_of_expr.
           cbn. rewrite Forall_forall; intros.
           rewrite in_map_iff in *; destruct_exists;
             rewrite filter_In in *; intuition idtac.
@@ -1960,10 +1974,212 @@ Section __.
                   econstructor; repeat eexists; repeat econstructor. }
               cbn; trivial. } }
       (* EJoin *)
-      1:{ admit. }
+      1:{ lazymatch goal with
+            H: type_of_expr _ e1 _ |- _ =>
+              apply get_expr_type_correct in H as He;
+              rewrite He in *; clear He;
+              apply type_of_expr__type_wf in H as H_wf1; auto;
+              eapply type_sound in H as H_sound1; eauto
+        end.
+          lazymatch goal with
+            H: type_of_expr _ e2 _ |- _ =>
+              apply get_expr_type_correct in H as He;
+              rewrite He in *; clear He;
+              apply type_of_expr__type_wf in H as H_wf2; auto;
+              eapply type_sound in H as H_sound2; eauto
+          end.
+          repeat invert_type_of_value. repeat invert_type_wf.
+          cbn. rewrite Forall_forall; intros.
+          rewrite in_map_iff in *; destruct_exists; intuition idtac.
+          lazymatch goal with
+            H: In _ (value_sort _) |- _ =>
+              eapply Permutation_in in H;
+              [ | apply Permutation_sym, Permuted_value_sort]
+          end.
+          repeat (rewrite in_flat_map in *; destruct_exists; intuition idtac).
+          destruct_match_hyp; [ | apply_in_nil; intuition fail ].
+          destruct_In; [ | apply_in_nil; intuition fail ].
+          repeat apply_Forall_In. repeat invert_type_of_value.
+          remember (mk_context
+                      (mk_context
+                         (mk_atomic_wf_context map.empty ts g_sig g_str)
+                         (mk_vars x tl1)
+                         (map lower_atomic_value (map snd vl)))
+                      (mk_vars y tl0)
+                      (map lower_atomic_value (map snd vl0))) as ctx.
+          assert_exists_hyps' ctx rls hyps.
+          { apply construct_hyps_interp.
+            lazymatch goal with
+            | H:context [ context_wf ] |- _ => apply H
+            end. subst. repeat apply atomic_wf_context_step.
+            apply mk_atomic_wf_context_wf; auto. }
+          assert_exists_hyps' ctx rls (concat (map snd (map lower_pexpr p))).
+          { apply construct_concat_hyps_interp.
+            rewrite Forall_forall; intros.
+            apply construct_hyps_interp.
+            rewrite map_map, in_map_iff in *.
+            destruct_exists. intuition idtac. apply_Forall_In.
+            destruct (lower_pexpr x1) eqn:Ep.
+            cbn in *; subst.
+            eapply lower_pexpr_asms_hold; eauto.
+            repeat lazymatch goal with
+              |- context[map (fun _ => lower_atomic_value (snd _)) ?vl] =>
+            replace (map (fun x => lower_atomic_value (snd x)) vl) with
+                (map lower_atomic_value (map snd vl)); auto using map_map
+              end.
+            repeat eapply context_wf_step; try apply venv_wf_step;
+              eauto using venv_wf_empty, mk_atomic_wf_context_wf;
+              constructor; auto. }
+          assert_exists_hyps' ctx rls l7.
+          { subst. apply construct_hyps_interp.
+            eapply lower_rexpr_asms_hold; eauto.
+            repeat eapply context_wf_step; repeat apply venv_wf_step;
+              eauto using mk_atomic_wf_context_wf, venv_wf_empty;
+              constructor; auto. }
+          repeat destruct_exists; intuition idtac.
+          econstructor.
+          1:{ rewrite Exists_exists. eexists; split.
+              1:{ apply_incl. do 2 (rewrite in_app_iff; right).
+                  left; reflexivity. }
+              1:{ econstructor; repeat eexists; repeat econstructor; cbn.
+                  1:{ instantiate (1:=ctx); subst.
+                      case_match; try rewrite Z.add_0_r; repeat econstructor.
+                      1,3: rewrite !put_mk_vars_get_time_var;
+                      apply get_atomic_wf_context_time_var; auto.
+                      1: reflexivity. }
+                  1:{ eapply lower_rexpr_complete; eauto.
+                      1: subst; repeat apply context_wf_step.
+                      all: repeat apply venv_wf_step;
+                        repeat apply tenv_wf_step;
+                        auto using mk_atomic_wf_context_wf, tenv_wf_empty, venv_wf_empty;
+                        try constructor; auto. }
+                  1,3: instantiate (1:=Zobj ts); subst;
+                  rewrite !put_mk_vars_get_time_var;
+                  apply get_atomic_wf_context_time_var; auto.
+                  1:{ instantiate (1:=map lower_atomic_value (map snd vl)); subst.
+                      apply interp_expr_mk_context_diff.
+                      2: rewrite Forall_forall; eauto using neq_vars_mk_vars_disjoint.
+                  apply interp_expr_mk_context_mk_vars; auto. }
+                  1:{ instantiate (1:=map lower_atomic_value (map snd vl0)); subst.
+                      apply interp_expr_mk_context_mk_vars; auto. }
+                  1:{ repeat apply Forall2_app; eauto.
+                      apply lower_pexprs_true; subst.
+                      eapply pexpr_forallb_true;
+                        eauto; repeat apply context_wf_step;
+                        repeat apply venv_wf_step;
+                        repeat apply tenv_wf_step;
+                        eauto using mk_atomic_wf_context_wf, venv_wf_empty, tenv_wf_empty;
+                      constructor; auto. } } }
+          1:{ cbn. repeat constructor.
+              1,2: lazymatch goal with
+                   _: In (VRecord ?vl) ?l,
+                     _: VSet ?l = interp_expr _ ?e,
+                  IH: context[lower_expr _ _ _ _ _ ?e = _ -> _],
+                         H: lower_expr _ _ _ _ _ ?e = _ |-
+                   context[?vl] =>
+                    eapply IH in H; eauto;
+                    [ | eauto using List.incl_app_bw_r, List.incl_app_bw_l ];
+                    unfold is_lowered_to_at in H
+                 end;
+              lazymatch goal with
+                H: _ = ?x, _: context[?x] |- _ =>
+                  rewrite <- H in *
+              end;
+              rewrite Z.add_0_r in *;
+              cbn in *;
+              lazymatch goal with
+                _: Forall _ (map _ ?l),
+                  H: In _ ?l |- _ =>
+                  apply in_map with (f:=lower_rec_value) in H
+              end; apply_Forall_In.
+              1: repeat (apply Forall_app; split); auto.
+              rewrite Forall_forall; intros.
+              rewrite in_map_iff in *; destruct_exists; intuition subst.
+              econstructor.
+              1:{ rewrite Exists_exists. eexists; split; eauto.
+                  econstructor; repeat eexists; repeat econstructor. }
+              cbn; trivial. } }
       (* EProj *)
-      1:{ admit. }
-    Admitted.
+      1:{ lazymatch goal with
+            H: type_of_expr _ e _ |- _ =>
+              apply get_expr_type_correct in H as He;
+              rewrite He in *; clear He;
+              apply type_of_expr__type_wf in H as H_wf; auto;
+              eapply type_sound in H as H_sound; eauto
+        end.
+          repeat invert_type_of_value. repeat invert_type_wf.
+          cbn. rewrite Forall_forall; intros.
+          rewrite in_map_iff in *; destruct_exists; intuition idtac.
+           lazymatch goal with
+            H: In _ (value_sort _) |- _ =>
+              eapply Permutation_in in H;
+              [ | apply Permutation_sym, Permuted_value_sort]
+           end.
+           rewrite in_map_iff in *; destruct_exists; intuition idtac.
+           apply_Forall_In. invert_type_of_value.
+           remember (mk_context
+                       (mk_atomic_wf_context map.empty ts g_sig g_str)
+                       (mk_vars x tl0)
+                       (map lower_atomic_value (map snd vl))) as ctx.
+          assert_exists_hyps' ctx rls hyps.
+          { apply construct_hyps_interp.
+            lazymatch goal with
+            | H:context [ context_wf ] |- _ => apply H
+            end. subst. repeat apply atomic_wf_context_step.
+            apply mk_atomic_wf_context_wf; auto. }
+          assert_exists_hyps' ctx rls l4.
+          { subst. apply construct_hyps_interp.
+            eapply lower_rexpr_asms_hold; eauto.
+            repeat eapply context_wf_step; repeat apply venv_wf_step;
+              eauto using mk_atomic_wf_context_wf, venv_wf_empty;
+              constructor; auto. }
+          repeat destruct_exists; intuition idtac.
+          econstructor.
+           1:{ rewrite Exists_exists. eexists; split.
+               1:{ apply_incl. rewrite in_app_iff; right; left; reflexivity. }
+               econstructor. repeat eexists; repeat econstructor.
+               1:{ instantiate (1:=ctx); subst.
+                   case_match; try rewrite Z.add_0_r; repeat econstructor.
+                      1,3: rewrite !put_mk_vars_get_time_var;
+                      apply get_atomic_wf_context_time_var; auto.
+                      1: reflexivity. }
+                  1:{ eapply lower_rexpr_complete; eauto.
+                      1: subst; repeat apply context_wf_step.
+                      all: repeat apply venv_wf_step;
+                        repeat apply tenv_wf_step;
+                        auto using mk_atomic_wf_context_wf, tenv_wf_empty, venv_wf_empty;
+                        try constructor; auto. }
+                  1: instantiate (1:=Zobj ts); subst;
+               rewrite !put_mk_vars_get_time_var;
+               apply get_atomic_wf_context_time_var; auto.
+               1:{ instantiate (1:=map lower_atomic_value (map snd vl)); subst.
+                   apply interp_expr_mk_context_mk_vars; auto. }
+               1:{ apply Forall2_app; eauto. } }
+           1:{ cbn. repeat constructor.
+              1: lazymatch goal with
+                   _: In (VRecord ?vl) ?l,
+                     _: VSet ?l = interp_expr _ ?e,
+                  IH: context[lower_expr _ _ _ _ _ ?e = _ -> _],
+                         H: lower_expr _ _ _ _ _ ?e = _ |-
+                   context[?vl] =>
+                    eapply IH in H; eauto;
+                    [ | eauto using List.incl_app_bw_r, List.incl_app_bw_l ];
+                    unfold is_lowered_to_at in H
+                 end;
+              lazymatch goal with
+                H: _ = ?x, _: context[?x] |- _ =>
+                  rewrite <- H in *
+              end;
+              rewrite Z.add_0_r in *;
+              cbn in *;
+              lazymatch goal with
+                _: Forall _ (map _ ?l),
+                  H: In _ ?l |- _ =>
+                  apply in_map with (f:=lower_rec_value) in H
+              end; apply_Forall_In.
+              1: repeat (apply Forall_app; split); auto. } }
+      Unshelve. all: apply map.empty.
+    Qed.
 
     Ltac invert_block_step :=
       lazymatch goal with

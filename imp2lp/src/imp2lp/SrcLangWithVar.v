@@ -117,15 +117,12 @@ Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
 Require Import imp2lp.Value.
 Require Import coqutil.Tactics.case_match.
 
-(* ??? use a list to represent the store so the compilation is simpler later
-Section WithMap.
-  Context {venv: map.map string value} {venv_ok: map.ok venv}.
-*)
-  (* First declare all mutable variables, each annotated with its schema *)
-  Record cfg_static := { sig : list (string * type); blks : list block }.
-  (* Store and an optional pointer to the next block *)
-  Record cfg_dynamic := { str : list (string * value); ptr : option nat }.
-  Record cfg := { sig_blks : cfg_static; str_ptr : cfg_dynamic }.
+(* Use a list to represent the store so the compilation is simpler later *)
+(* First declare all mutable variables, each annotated with its schema *)
+Record cfg_static := { sig : list (string * type); blks : list block }.
+(* Store and an optional pointer to the next block *)
+Record cfg_dynamic := { str : list (string * value); ptr : option nat }.
+Record cfg := { sig_blks : cfg_static; str_ptr : cfg_dynamic }.
 
 (* Semantics *)
 Ltac destruct_String_eqb x y :=
@@ -410,6 +407,7 @@ Section WithMap.
                           Forall (well_typed_pexpr (map.put map.empty x t)) ps ->
                           type_of_expr (EFilter e x ps) (TSet t)
     | TEJoin e1 e2 x1 x2 ps r t1 t2 t :
+      x1 <> x2 ->
       type_of_expr e1 (TSet t1) ->
       type_of_expr e2 (TSet t2) ->
       Forall (well_typed_pexpr (map.put (map.put map.empty x1 t1) x2 t2)) ps ->
