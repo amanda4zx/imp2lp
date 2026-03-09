@@ -1624,7 +1624,7 @@ Section __.
         forall x tl vl,
           type_wf (TRecord tl) ->
           type_of_value (VRecord vl) (TRecord tl) ->
-          context_wf ts g_sig g_str (map.put Genv x (TRecord tl)) (map.put env x (VRecord vl)) (mk_context m (mk_vars x tl) (lower_rec_value (VRecord vl))).
+          context_wf ts g_sig g_str (map.put Genv x (TRecord tl)) (map.put env x (VRecord vl)) (mk_context m (mk_vars x tl) (map lower_atomic_value (map snd vl))).
     Proof.
       unfold context_wf; intuition idtac.
       1: rewrite put_mk_vars_get_time_var; assumption.
@@ -1721,8 +1721,24 @@ Section __.
       rewrite HE; eapply lower_pexpr_complete; eauto.
     Qed.
 
+    Lemma construct_concat_hyps_interp : forall P (ctx : context) hypss,
+        Forall (fun hyps =>
+                  exists hyps',
+                    Forall2 (interp_fact ctx) hyps hyps' /\ Forall P hyps') hypss ->
+        exists hyps' : list (rel * list obj),
+          Forall2 (interp_fact ctx) (concat hypss) hyps' /\ Forall P hyps'.
+    Proof.
+      induction hypss; cbn; intros.
+      1: eexists; eauto.
+      invert_Forall.
+      apply IHhypss in H3. repeat destruct_exists.
+      eexists. intuition idtac; eauto using Forall2_app.
+      apply Forall_app; intuition fail.
+    Qed.
+
     Lemma lower_expr_complete : forall e hyps b out next_rel e_dcls e_rls rls next_rel' tl t g_sig g_str ts,
         lower_expr g_sig hyps b out next_rel e = (e_dcls, e_rls, next_rel', tl) ->
+        In true_rl rls ->
         type_of_expr g_sig e t ->
         str_wf g_sig g_str ->
         sig_wf g_sig ->
@@ -1873,6 +1889,7 @@ Section __.
               rewrite He in *; clear He;
               apply type_of_expr__type_wf in H; auto
           end. repeat invert_type_wf.
+          invert_type_of_expr.
           cbn. rewrite Forall_forall; intros.
           rewrite in_map_iff in *; destruct_exists;
             rewrite filter_In in *; intuition idtac.
@@ -1884,7 +1901,20 @@ Section __.
             | H:context [ context_wf ] |- _ => apply H
             end. subst. apply atomic_wf_context_step.
             apply mk_atomic_wf_context_wf; auto. }
-          destruct_exists; intuition idtac.
+          assert_exists_hyps' ctx rls (concat (map snd (map lower_pexpr p))).
+          { apply construct_concat_hyps_interp.
+            rewrite Forall_forall; intros.
+            apply construct_hyps_interp.
+            rewrite map_map, in_map_iff in *.
+            destruct_exists. intuition idtac. apply_Forall_In.
+            destruct (lower_pexpr x1) eqn:Ep.
+            cbn in *; subst.
+            eapply lower_pexpr_asms_hold; eauto.
+            replace (map (fun x => lower_atomic_value (snd x)) vl) with
+              (map lower_atomic_value (map snd vl)); auto using map_map.
+            eapply context_wf_step; eauto using venv_wf_empty,
+            mk_atomic_wf_context_wf; constructor; auto. }
+          repeat destruct_exists; intuition idtac.
           econstructor.
           1:{ rewrite Exists_exists. eexists; split.
               1:{ apply_incl. rewrite in_app_iff; right.
@@ -1901,14 +1931,38 @@ Section __.
                       rewrite put_mk_vars_get_time_var;
                         auto using get_atomic_wf_context_time_var. }
                   1:{ subst; auto using interp_expr_mk_context_mk_vars. }
-                  1:{ }
                   1:{ repeat apply Forall2_app; eauto.
-                      1:{ apply lower_pexprs_true.
+                      1:{ apply lower_pexprs_true. subst.
                           eapply pexpr_forallb_true; eauto.
-                        admit. }
-                      admit. } } }
-          cbn. admit. }
-
+                          1:{ apply context_wf_step; auto using venv_wf_empty, mk_atomic_wf_context_wf;
+                              constructor; auto. }
+                          1: apply venv_wf_step; auto using venv_wf_empty; constructor; auto.
+                          1: apply tenv_wf_step; auto using tenv_wf_empty; constructor; auto. } } } }
+          1:{ cbn. constructor.
+              1:{ eapply IHe in E; eauto.
+                  2: eauto using List.incl_app_bw_l.
+                  unfold is_lowered_to_at in E.
+                  lazymatch goal with
+                    H: _ = interp_expr _ _ |- _ =>
+                      rewrite <- H in E
+                  end.
+                  rewrite Z.add_0_r in *.
+                  cbn in *.
+                  lazymatch goal with
+                    H: In _ _ |- _ =>
+                      apply in_map with (f:=lower_rec_value) in H
+                  end. apply_Forall_In. }
+              1: repeat (apply Forall_app; split); auto.
+              rewrite Forall_forall; intros.
+              rewrite in_map_iff in *; destruct_exists; intuition subst.
+              econstructor.
+              1:{ rewrite Exists_exists. eexists; split; eauto.
+                  econstructor; repeat eexists; repeat econstructor. }
+              cbn; trivial. } }
+      (* EJoin *)
+      1:{ admit. }
+      (* EProj *)
+      1:{ admit. }
     Admitted.
 
     Ltac invert_block_step :=
@@ -1922,6 +1976,7 @@ Section __.
         forall hyps ts g_str next_rel dcls rls rls' next_rel',
           lower_mut_assignments hyps g_sig next_rel (combine (map fst g_sig') asgns) = (dcls, rls, next_rel') ->
           incl rls rls' ->
+          In true_rl rls' ->
           str_wf g_sig g_str ->
           sig_wf g_sig ->
           venv_is_lowered_to_at g_str rls' ts ->
