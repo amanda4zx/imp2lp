@@ -1,6 +1,6 @@
 From Stdlib Require Import String ZArith List Bool Permutation.
 From coqutil Require Import Map.Interface Decidable Datatypes.Result Datatypes.List Tactics.case_match.
-From imp2lp Require Import Datalog SrcLangWithVar Value MyTactics.
+From imp2lp Require Import withvar0.Datalog withvar0.SrcLangWithVar Value MyTactics.
 Import ListNotations.
 
 Inductive var : Type :=

@@ -1,6 +1,6 @@
 From Stdlib Require Import String ZArith List Bool Permutation.
 Require Import coqutil.Map.Interface.
-From imp2lp Require Import SrcLang Value MyTactics.
+From imp2lp Require Import basic.SrcLang Value MyTactics.
 Require Import coqutil.Datatypes.Result.
 
 Import ListNotations.

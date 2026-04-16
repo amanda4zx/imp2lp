@@ -10,7 +10,6 @@ Section WithWord.
   | VList (l : list value)
   | VRecord (l : list (string * value))
   | VSet (l : list value).
-  (* ??? Need unit value? *)
 
   Section ValueIH.
     Context (P : value -> Prop).
