@@ -1,11 +1,6 @@
-(* Include mutable variable constructs and use Owen's Datalog definitions *)
-
 From Stdlib Require Import String ZArith List Bool Permutation.
-From coqutil Require Import Map.Interface Decidable.
-Require Import Datalog.Datalog.
-Require Import imp2lp.SrcLangWithVar imp2lp.Value.
-Require Import coqutil.Datatypes.Result.
-Require Import coqutil.Tactics.case_match.
+From coqutil Require Import Map.Interface Decidable Datatypes.Result Datatypes.List Tactics.case_match.
+From imp2lp Require Import Datalog SrcLangWithVar Value MyTactics.
 Import ListNotations.
 
 Inductive var : Type :=
@@ -675,7 +670,7 @@ Section __.
       Forall (fun '(x, v) => is_lowered_to v rls (res_rel x)) str.
 
     Definition venv_is_lowered_from_at (rls : list rule) (str : list (string * value)) (ts : Z) : Prop :=
-      Forall (fun '(x, v) => is_lowered_from_at rls (res_rel x) v ts) str.
+      Forall (fun '(x, v) => is_lowered_from_at rls (str_rel x) v ts) str.
 
     Definition venv_is_lowered_from (rls : list rule) (str : list (string * value)) : Prop :=
       Forall (fun '(x, v) => is_lowered_from rls (res_rel x) v) str.
@@ -733,6 +728,8 @@ Section __.
           invert_cons; eapply IHvl; eauto. }
     Qed.
 
+    (* ===== Compiler completeness proofs ===== *)
+
     Lemma lower_init_value_complete : forall x v t,
         type_of_value v t ->
         type_wf t ->
@@ -763,7 +760,6 @@ Section __.
               1:{ apply IHl in H5.
                   apply_Forall_In. }
               apply incl_tl, incl_refl. }
-          (* ??? Where did these evar come from? *)
           Unshelve. all: apply map.empty. }
     Qed.
 
@@ -788,10 +784,24 @@ Section __.
           end; trivial.
           apply_Forall_In.
           eapply prog_impl_fact_weaken; eauto.
-          eapply List.incl_app_bw_l; eassumption. }
+          lazymatch goal with
+            H: incl (_ ++ _) _ |- _ => apply incl_app_inv in H
+          end. intuition fail. }
       1:{ apply IHg_sig; auto.
-          eapply List.incl_app_bw_r. eauto. }
+          lazymatch goal with
+            H: incl (_ ++ _) _ |- _ => apply incl_app_inv in H
+          end. intuition fail. }
     Qed.
+
+    Lemma incl_app_bw_l {A} (l l1 l2 : list A) :
+      incl (l1 ++ l2) l ->
+      incl l1 l.
+    Proof. intros H. cbv [incl] in *. intros. apply H. apply in_app_iff. auto. Qed.
+
+    Lemma incl_app_bw_r {A} (l l1 l2 : list A) :
+      incl (l1 ++ l2) l ->
+      incl l2 l.
+    Proof. intros H. cbv [incl] in *. intros. apply H. apply in_app_iff. auto. Qed.
 
     Lemma cfg_steps__ptr_Some : forall g_sig g_d g_d',
         cfg_steps g_sig g_d g_d' ->
@@ -1007,10 +1017,19 @@ Section __.
       exists x1; intuition fail.
     Qed.
 
+    Lemma Forall2_and A B R1 R2 (xs : list A) (ys : list B) :
+      Forall2 R1 xs ys ->
+      Forall2 R2 xs ys ->
+      Forall2 (fun x y => R1 x y /\ R2 x y) xs ys.
+    Proof.
+      induction 1; intros; invert_Forall2; eauto.
+    Qed.
+
+
     Ltac apply_Forall2_and :=
       lazymatch goal with
         H: Forall2 _ ?l1 ?l2, H': Forall2 _ ?l1 ?l2 |- _ =>
-          pose proof (List.Forall2_and _ _ _ _ H H');
+          pose proof (Forall2_and _ _ _ _ H H');
           clear H H'
       end.
 
@@ -1160,6 +1179,32 @@ Section __.
           eapply IH in H as IH'; clear IH
       end.
 
+    Lemma Forall2_map_l {A B C} R (f : A -> B) (l1 : list A) (l2 : list C) :
+      Forall2 (fun x => R (f x)) l1 l2 <->
+        Forall2 R (map f l1) l2.
+    Proof.
+      split; intros H.
+      - induction H. 1: constructor. constructor; assumption.
+      - remember (map f l1) as l1' eqn:E. revert l1 E. induction H; intros l1 Hl1.
+        + destruct l1; inversion Hl1. constructor.
+        + destruct l1; inversion Hl1. subst. constructor; auto.
+    Qed.
+
+    Lemma Forall2_flip_iff {A B} R (l1 : list A) (l2 : list B) :
+      Forall2 (fun x y => R y x) l2 l1 <->
+        Forall2 R l1 l2.
+    Proof.
+      split; auto using Forall2_flip.
+    Qed.
+
+    Lemma Forall2_map_r {A B C} R (f : B -> C) (l1 : list A) (l2 : list B) :
+      Forall2 (fun x y => R x (f y)) l1 l2 <->
+        Forall2 R l1 (map f l2).
+    Proof.
+      symmetry. rewrite <- Forall2_flip_iff, <- Forall2_map_l, <- Forall2_flip_iff.
+      reflexivity.
+    Qed.
+
     Lemma lower_aexpr_complete : forall ts g_sig g_str Genv env a t ctx a' asms,
         lower_aexpr a = (a', asms) ->
         type_of_aexpr g_sig Genv a t ->
@@ -1203,7 +1248,7 @@ Section __.
           apply_Forall2_access_record; eauto.
           destruct_match_hyp; intuition idtac.
           unfold mk_vars in *.
-          rewrite <- List.Forall2_map_l, <- !List.Forall2_map_r in *.
+          rewrite <- Forall2_map_l, <- !Forall2_map_r in *.
           eapply Forall2_access_record_same in H10; eauto.
           constructor; assumption. }
     Qed.
@@ -1502,6 +1547,11 @@ Section __.
       1:{ repeat case_match; eauto; rewrite_map_get_put_goal. }
     Qed.
 
+    Lemma Permutation_incl {A} (l l' : list A) :
+      Permutation l l' ->
+      incl l l'.
+    Proof. cbv [incl]. eauto using Permutation_in. Qed.
+
     Lemma set_insert_incl2 : forall v l,
         incl (set_insert v l) (v :: l).
     Proof.
@@ -1512,7 +1562,7 @@ Section __.
       eapply incl_tran; eauto.
       eapply incl_tran.
       1: eapply incl_tl.
-      2: apply List.Permutation_incl, perm_swap.
+      2: apply Permutation_incl, perm_swap.
       apply incl_refl.
     Qed.
 
@@ -1525,7 +1575,7 @@ Section __.
 
     Ltac prove_interp_expr_attr_vars :=
       subst; rewrite_asm;
-      rewrite <- List.Forall2_map_l, <- List.Forall2_map_r;
+      rewrite <- Forall2_map_l, <- Forall2_map_r;
       erewrite length_eq_Forall2_combine;
       [ | rewrite !length_map; reflexivity ];
       rewrite combine_map_fst_map_snd;
@@ -1832,7 +1882,7 @@ Section __.
               subst. assumption. } }
       (* EInsert *)
       1:{ apply_type_sound; eauto; invert_type_of_value; cbn.
-          rewrite Forall_map.
+          rewrite Lists.List.Forall_map.
           eapply incl_Forall.
           1: apply set_insert_incl2.
           constructor.
@@ -1865,10 +1915,10 @@ Section __.
                 IH: context[type_of_expr _ _ _ -> _],
                   H: type_of_expr _ _ _ |- _ =>
                   eapply IH in H
-              end; eauto using List.incl_app_bw_l.
+              end; eauto using incl_app_bw_l.
               unfold is_lowered_to_at in *.
               rewrite <- H in *; cbn in *.
-              rewrite Z.add_0_r, Forall_map in *.
+              rewrite Z.add_0_r, Lists.List.Forall_map in *.
               rewrite Forall_forall; intros; apply_Forall_In.
               apply_Forall_In; invert_type_of_value.
               remember (mk_atomic_wf_context (mk_context map.empty (map attr_var (map fst vl)) (map lower_atomic_value (map snd vl))) ts g_sig g_str) as ctx.
@@ -1948,7 +1998,7 @@ Section __.
                           1: apply tenv_wf_step; auto using tenv_wf_empty; constructor; auto. } } } }
           1:{ cbn. constructor.
               1:{ eapply IHe in E; eauto.
-                  2: eauto using List.incl_app_bw_l.
+                  2: eauto using incl_app_bw_l.
                   unfold is_lowered_to_at in E.
                   lazymatch goal with
                     H: _ = interp_expr _ _ |- _ =>
@@ -2072,7 +2122,7 @@ Section __.
                          H: lower_expr _ _ _ _ _ ?e = _ |-
                    context[?vl] =>
                     eapply IH in H; eauto;
-                    [ | eauto using List.incl_app_bw_r, List.incl_app_bw_l ];
+                    [ | eauto using incl_app_bw_r, incl_app_bw_l ];
                     unfold is_lowered_to_at in H
                  end;
               lazymatch goal with
@@ -2157,7 +2207,7 @@ Section __.
                          H: lower_expr _ _ _ _ _ ?e = _ |-
                    context[?vl] =>
                     eapply IH in H; eauto;
-                    [ | eauto using List.incl_app_bw_r, List.incl_app_bw_l ];
+                    [ | eauto using incl_app_bw_r, incl_app_bw_l ];
                     unfold is_lowered_to_at in H
                  end;
               lazymatch goal with
@@ -2412,7 +2462,6 @@ Section __.
         lower_cfg g = (dcls, rls) ->
         well_typed_cfg g ->
         cfg_steps g.(sig_blks) g.(str_ptr) g_d' ->
-        let muts := map fst g.(sig_blks).(sig) in
         match g_d'.(ptr) with
         | Some n =>
             exists ts, venv_is_lowered_to_at g_d'.(str) rls ts /\
@@ -2481,6 +2530,231 @@ Section __.
       Unshelve.
       all: apply map.empty.
     Qed.
+
+    Theorem lower_cfg_complete : forall (g : cfg) (g_d' : cfg_dynamic) dcls rls,
+        lower_cfg g = (dcls, rls) ->
+        well_typed_cfg g ->
+        cfg_steps g.(sig_blks) g.(str_ptr) g_d' ->
+        g_d'.(ptr) = None ->
+        venv_is_lowered_to g_d'.(str) rls.
+    Proof.
+      intros; eapply lower_cfg_complete' in H; eauto.
+      rewrite_asm_hyp; assumption.
+    Qed.
+
+    (* ===== Compiler soundness proofs ===== *)
+
+    Ltac invert_prog_impl_fact :=
+      lazymatch goal with
+            H: prog_impl_fact _ _ |- _ =>
+              inversion H; subst; clear H
+      end.
+
+    Ltac invert_rule_impl :=
+      lazymatch goal with
+            H: rule_impl _ _ _ |- _ =>
+              inversion H; subst; clear H
+      end.
+
+    Ltac invert_rule_impl' :=
+      lazymatch goal with
+            H: rule_impl' _ _ _ _ _ |- _ =>
+              inversion H; subst; clear H
+      end.
+
+    Ltac invert_prog_impl_fact_singleton_concls :=
+      invert_prog_impl_fact;
+      rewrite Exists_exists in *; destruct_exists;
+      intuition idtac;
+      destruct_In; try (apply_in_nil; intuition fail);
+      invert_rule_impl;
+      repeat destruct_exists; intuition idtac;
+      invert_rule_impl'; cbn in *;
+      rewrite Exists_exists in *; destruct_exists;
+      intuition idtac;
+      destruct_In; try (apply_in_nil; intuition fail);
+      invert_interp_fact; cbn in *;
+      repeat invert_Forall2; repeat invert_Datalog_interp_expr;
+      cbn in *; repeat destruct_match_hyp; try discriminate;
+      cbn in *; repeat (clear_refl; do_injection).
+
+    Lemma interp_dexpr_literal : forall ctx v v',
+        Datalog.interp_expr ctx (dexpr_literal v) v' ->
+        v = v'.
+    Proof.
+      destruct v; cbn; inversion 1; subst; cbn in *;
+        destruct_match_hyp; cbn in *; congruence.
+    Qed.
+
+    Lemma Forall2_map_eq : forall A B f (xs : list A) (ys : list B),
+        Forall2 (fun x y => f x = y) xs ys -> map f xs = ys.
+    Proof.
+      induction 1; auto; cbn.
+      f_equal; auto.
+    Qed.
+
+    Lemma lower_init_value_sound : forall (x : string) (v : value) (t : type),
+       type_of_value v t ->
+       type_wf t ->
+       forall vs, prog_impl_fact (lower_init_value (str_rel x) v) (str_rel x, Zobj 0 :: vs) ->
+                  In vs (lower_value v).
+    Proof.
+      destruct 1; cbn.
+      1-3: intros; left;
+      invert_prog_impl_fact_singleton_concls; reflexivity.
+      1:{ intros; left.
+          invert_prog_impl_fact_singleton_concls; subst.
+          apply Forall2_map_eq.
+          rewrite <- !Forall2_map_l in *.
+          eapply Forall2_impl; eauto.
+          cbn; intros.
+          eapply interp_dexpr_literal; eassumption. }
+      1:{ intros. invert_type_wf.
+          invert_prog_impl_fact.
+          assert (l0 = []).
+          { rewrite Exists_exists in *.
+            destruct_exists; intuition idtac.
+            rewrite in_map_iff in *.
+            destruct_exists; intuition idtac.
+            subst. invert_rule_impl.
+            repeat destruct_exists.
+            intuition idtac. invert_rule_impl'.
+            cbn in *. invert_Forall2.
+            lazymatch goal with
+              H: interp_option_agg_expr _ _ _ _ |- _ =>
+                inversion H; subst
+            end.
+            reflexivity. }
+          subst. invert_Forall.
+          induction H; cbn in *.
+          1:{ rewrite Exists_nil in *; intuition fail. }
+          1:{ inversion H0; subst; auto; clear H0.
+              invert_rule_impl.
+              repeat destruct_exists; intuition idtac.
+              invert_rule_impl'; cbn in *.
+              rewrite Exists_exists in *.
+              destruct_exists; intuition idtac.
+              repeat destruct_In; try apply_in_nil; intuition idtac.
+              invert_interp_fact; cbn in *.
+              invert_Forall2.
+              left. unfold lower_rec_value in *.
+              invert_type_of_value.
+              eapply Forall2_map_eq.
+              rewrite <- !Forall2_map_l in *.
+              eapply Forall2_impl; eauto.
+              cbn; intros. eauto using interp_dexpr_literal. } }
+    Qed.
+
+    Definition rl_only_from (P : rule -> Prop) (rls rls' : list rule) :=
+      forall rl, P rl -> In rl rls -> In rl rls'.
+(* ???
+    (forall x r, P x -> r in R1
+    (forall R_base fac, prog_impl_fact R_base fac -> P fac)
+      [[ R1 ++ R2 ]] = [[ prog(R1) ++ R2 ]] *)
+
+    Lemma venv_is_lowered_from_at_0 : forall g_sig g_str rls,
+        sig_wf g_sig ->
+        str_wf g_sig g_str ->
+        incl (concat (map (fun '(x, v) => lower_init_value (str_rel x) v) g_str)) rls ->
+        venv_is_lowered_from_at rls g_str 0.
+
+(* ???
+      (str_rel x, 0 :: a) :- (R, a).
+
+
+      S : P(fact) <-> p : P(ground_rule).
+      [[ init_rls ]]S : P(fact).
+      = [[ init_rls ++ p ]].
+
+      = [[ init_rls ++ p ]]S
+          [[ p ]] [[ init_rls ]]S
+
+          [[ init_rls ++ p ++ (prog(S)) ]] = [[ p + prog(init_rls ++ prog(S)) ]] *)
+
+
+    Proof.
+      unfold str_wf, sig_wf; intuition idtac. generalize dependent g_str.
+      induction g_sig; cbn; intros; destruct g_str; try discriminate;
+        constructor; cbn in *;
+        intuition idtac; invert_Forall; invert_NoDup;
+        invert_cons; invert_Forall2.
+      1:{ case_match. unfold is_lowered_from_at.
+          intros; cbn in *.
+          invert_prog_impl_fact.
+          rewrite Exists_exists in *.
+          destruct_exists; intuition idtac.
+          invert_rule_impl;
+            repeat destruct_exists; intuition idtac;
+            invert_rule_impl'; cbn in *;
+            rewrite Exists_exists in *; destruct_exists;
+            intuition idtac;
+            invert_interp_fact.
+
+          lazymatch goal with
+            H: type_of_value _ _ |- _ =>
+              eapply lower_init_value_sound in H
+          end; eauto.
+      admit. }
+      1:{ apply IHg_sig; auto.
+          eapply incl_app_bw_r. eauto. }
+    Admitted.
+
+
+        (* rl_only_from
+          (fun rl => exists x, In (res_rel x) (map fact_R (rule_concls rl)))
+          rls
+          (List.map lower_mut_res g_sig) -> *)
+
+    Lemma lower_mut_res__venv_is_lowered_from : forall g_sig g_str rls ts,
+        incl (map lower_mut_res g_sig) rls ->
+        sig_wf g_sig ->
+        str_wf g_sig g_str ->
+        prog_impl_fact rls (ret_rel, [Zobj ts]) ->
+        venv_is_lowered_from_at rls g_str ts ->
+        venv_is_lowered_from rls g_str.
+    Proof.
+    Admitted.
+
+    Theorem lower_cfg_sound' : forall (g : cfg) (g_d' : cfg_dynamic) dcls rls,
+        lower_cfg g = (dcls, rls) ->
+        well_typed_cfg g ->
+        cfg_steps g.(sig_blks) g.(str_ptr) g_d' ->
+        match g_d'.(ptr) with
+        | Some n =>
+            exists ts, venv_is_lowered_from_at rls g_d'.(str) ts /\
+                         prog_impl_fact rls (blk_rel n, [Zobj ts])
+        | None => venv_is_lowered_from rls g_d'.(str)
+        end.
+     Proof.
+      unfold lower_cfg; intros.
+      destruct g; cbn in *.
+      intuition idtac.
+      lazymatch goal with
+        H: context[cfg_steps] |- _ =>
+          induction H
+      end; intros.
+      1:{ unfold well_typed_cfg in *; cbn in *; intuition idtac.
+          repeat destruct_match_hyp; subst;
+          invert_pair.
+          1:{ exists 0%Z; split.
+              1:{ eapply venv_is_lowered_from_at_0; eauto.
+                  apply incl_tl, incl_appl, incl_refl. }
+              1:{ econstructor.
+                  1:{ left. econstructor.
+                      repeat eexists; eauto;
+                        repeat econstructor. }
+                  trivial. } }
+          1:{ eapply lower_mut_res__venv_is_lowered_from; eauto.
+              1:{ auto using incl_tl, incl_appl, incl_appr, incl_refl. }
+              1:{ econstructor.
+                  1:{ rewrite Exists_exists; eexists.
+                      intuition idtac.
+                      1: left; reflexivity.
+                      econstructor; repeat eexists; repeat econstructor. }
+                  1: trivial. }
+              1:{ eapply venv_is_lowered_from_at_0; eauto.
+                  auto using incl_tl, incl_appl, incl_refl. } } }
+      Admitted.
   End WithVarenv.
 End __.
 
