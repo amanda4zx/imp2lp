@@ -100,3 +100,7 @@ Inductive dblocks_impl (blks : list dblock) : (fact -> Prop) -> nat -> (fact -> 
   nth_error blks k = Some blk ->
   equiv db3 (union_db (mk_flow_db db2 blk.(fl)) (mk_asgns_db db2 blk.(asgns))) ->
   dblocks_impl blks db1 (S t) db3.
+
+Definition dprog_impl (prg : dprog) : nat -> (fact -> Prop) -> Prop :=
+  let init_db := rules_impl (fun _ => False) prg.(init) in
+  dblocks_impl prg.(blks) init_db.
