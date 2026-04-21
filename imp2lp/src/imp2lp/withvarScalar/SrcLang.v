@@ -34,8 +34,17 @@ Variant block : Type :=
   Blk (asgns : list expr) (fl : flow).
 
 Require Import coqutil.Map.Interface coqutil.Datatypes.Result.
-Require Import imp2lp.Value.
 Require Import coqutil.Tactics.case_match.
+
+Variant value : Type :=
+  VInt (n : Z) | VBool (b : bool).
+
+Definition value_eqb (a b : value) : bool :=
+  match a, b with
+  | VInt n1, VInt n2 => Z.eqb n1 n2
+  | VBool b1, VBool b2 => eqb b1 b2
+  | _, _ => false
+  end.
 
 (* Use a list to represent the store so the compilation is simpler later *)
 (* First declare all mutable variables, each annotated with its schema *)
