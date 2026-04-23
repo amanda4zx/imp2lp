@@ -45,12 +45,20 @@ Variant dvalue : Type :=
   | DVBool (b : bool)
   | DVInt (n : Z).
 
+Definition dvalue_eqb (a b : dvalue) : bool :=
+  match a, b with
+  | DVInt n1, DVInt n2 => Z.eqb n1 n2
+  | DVBool b1, DVBool b2 => Bool.eqb b1 b2
+  | _, _ => false
+  end.
+
 Record fact :=
   { fact_rel : rel; fact_args : list dvalue }.
 
 Definition mk_fact R args : fact :=
   {| fact_rel := R; fact_args := args |}.
 
+Unset Elimination Schemes.
 Inductive pftree {T : Type} (P : T -> list T -> Prop) (Q : T -> Prop) : T -> Prop :=
 | pftree_leaf x :
   Q x ->
@@ -59,7 +67,46 @@ Inductive pftree {T : Type} (P : T -> list T -> Prop) (Q : T -> Prop) : T -> Pro
   P x l ->
   Forall (pftree _ _) l ->
   pftree _ _ x.
+Set Elimination Schemes.
 
+Section __.
+  Context (T : Type) (P : T -> list T -> Prop)
+         (Q P0 : T -> Prop).
+  Context (H1: forall x : T, Q x -> P0 x)
+  (H2: forall (x : T) (l : list T),
+      P x l -> Forall (pftree P Q) l -> Forall P0 l -> P0 x).
+
+  Section Tmp.
+    Context(pftree_IS : forall (t: T), pftree P Q t -> P0 t).
+    Fixpoint mk_step_hyp (l : list T) (H : Forall (pftree P Q) l) : Forall P0 l :=
+      match H with
+      | Forall_nil _ => Forall_nil _
+      | Forall_cons _ Hx HFl =>
+          Forall_cons _ (pftree_IS _ Hx) (mk_step_hyp _ HFl)
+      end.
+  End Tmp.
+
+  Fixpoint pftree_IS (t : T)(H : pftree P Q t) : P0 t :=
+    match H with
+    | pftree_leaf _ _ _ HQ => H1 _ HQ
+    | pftree_step _ _ _ l Hl HFl =>
+        H2 _ l Hl HFl (mk_step_hyp pftree_IS l HFl)
+    end.
+End __.
+
+Lemma pftree_ind {U : Type} (P : U -> list U -> Prop) Q R :
+  (forall x, Q x -> R x) ->
+  (forall x l,
+      P x l ->
+      Forall (pftree P Q) l ->
+      Forall R l ->
+      R x) ->
+  forall x, pftree P Q x -> R x.
+Proof.
+  intros H1 H2. fix self 2.
+  intros x Hx. inversion Hx; subst. 1: auto. eapply H2. 1,2: eassumption.
+  clear -H0 self. induction H0; eauto.
+Qed.
 
 Definition union_db {A} (db1 db2 : A -> Prop) :=
   fun f => db1 f \/ db2 f.
@@ -70,7 +117,30 @@ Definition equiv {A} (P Q : A -> Prop) :=
 Section WithMap.
  Context {context : map.map nat dvalue} {context_ok : map.ok context}.
 
- Inductive interp_clause : context -> clause -> fact -> Prop :=.
+ Inductive interp_dexpr (ctx : context) : dexpr -> dvalue -> Prop :=
+ | IDVar x v : map.get ctx x = Some v ->
+             interp_dexpr ctx (DVar x) v
+ | IDBool b : interp_dexpr ctx (DBool b) (DVBool b)
+ | IDInt n : interp_dexpr ctx (DInt n) (DVInt n)
+ | IDNot e b : interp_dexpr ctx e (DVBool b) ->
+             interp_dexpr ctx (DNot e) (DVBool (negb b))
+ | IDAnd e1 e2 b1 b2 : interp_dexpr ctx e1 (DVBool b1) ->
+                interp_dexpr ctx e2 (DVBool b2) ->
+                interp_dexpr ctx (DAnd e1 e2) (DVBool (andb b1 b2))
+ | IDPlus e1 e2 n1 n2 : interp_dexpr ctx e1 (DVInt n1) ->
+                interp_dexpr ctx e2 (DVInt n2) ->
+                interp_dexpr ctx (DPlus e1 e2) (DVInt (n1 + n2))
+ | IDLt e1 e2 n1 n2 : interp_dexpr ctx e1 (DVInt n1) ->
+                interp_dexpr ctx e2 (DVInt n2) ->
+                interp_dexpr ctx (DLt e1 e2) (DVBool (Z.leb n1 n2))
+ | IDEq e1 e2 v1 v2 : interp_dexpr ctx e1 v1 ->
+                interp_dexpr ctx e2 v2 ->
+                interp_dexpr ctx (DEq e1 e2) (DVBool (dvalue_eqb v1 v2)).
+
+ Variant interp_clause (ctx : context) : clause -> fact -> Prop :=
+   mk_IC c f : c.(clause_rel) = f.(fact_rel) ->
+   Forall2 (interp_dexpr ctx) c.(clause_args) f.(fact_args) ->
+   interp_clause ctx c f.
 
  Definition rule_impl (ctx : context) (rl : rule) (f : fact) (f_hyps : list fact) :=
    interp_clause ctx rl.(rule_concl) f /\
