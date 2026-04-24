@@ -132,7 +132,7 @@ Section WithMap.
                 interp_dexpr ctx (DPlus e1 e2) (DVInt (n1 + n2))
  | IDLt e1 e2 n1 n2 : interp_dexpr ctx e1 (DVInt n1) ->
                 interp_dexpr ctx e2 (DVInt n2) ->
-                interp_dexpr ctx (DLt e1 e2) (DVBool (Z.leb n1 n2))
+                interp_dexpr ctx (DLt e1 e2) (DVBool (Z.ltb n1 n2))
  | IDEq e1 e2 v1 v2 : interp_dexpr ctx e1 v1 ->
                 interp_dexpr ctx e2 v2 ->
                 interp_dexpr ctx (DEq e1 e2) (DVBool (dvalue_eqb v1 v2)).

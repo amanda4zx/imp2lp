@@ -156,7 +156,13 @@ Section WithMap.
                     type_of_expr (AAnd e1 e2) TBool
     | TAPlus e1 e2 : type_of_expr e1 TInt ->
                      type_of_expr e2 TInt ->
-                     type_of_expr (APlus e1 e2) TInt.
+                     type_of_expr (APlus e1 e2) TInt
+    | TALt e1 e2 : type_of_expr e1 TInt ->
+                   type_of_expr e2 TInt ->
+                   type_of_expr (ALt e1 e2) TBool
+    | TAEq e1 e2 t : type_of_expr e1 t ->
+                     type_of_expr e2 t ->
+                     type_of_expr (AEq e1 e2) TBool.
 
     Definition well_typed_asgns (asgns : list expr) : Prop :=
       Forall2 type_of_expr asgns g_sig.
