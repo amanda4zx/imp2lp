@@ -163,6 +163,17 @@ Section WithMap.
    | DFRet => f = mk_fact terminate_rel nil
    end.
 
+ Fixpoint dblocks_impl (blks : list dblock) (in_db : fact -> Prop) (t : nat) : fact -> Prop :=
+   match t with
+   | O => in_db
+   | S t => let db := dblocks_impl blks in_db t in
+            fun f => exists k blk,
+                db (mk_fact (blk_rel k) nil) /\
+                  nth_error blks k = Some blk /\
+                  (mk_flow_db db blk.(dblock_fl) f \/
+                     mk_asgns_db db blk.(dblock_asgns) f)
+   end.
+(* ??? remove
  Inductive dblocks_impl (blks : list dblock) : (fact -> Prop) -> nat -> (fact -> Prop) -> Prop :=
  | DIBase db : dblocks_impl blks db 0 db
  | DIStep db1 db2 db3 t k blk:
@@ -171,8 +182,9 @@ Section WithMap.
    nth_error blks k = Some blk ->
    equiv db3 (union_db (mk_flow_db db2 blk.(dblock_fl)) (mk_asgns_db db2 blk.(dblock_asgns))) ->
    dblocks_impl blks db1 (S t) db3.
+*)
 
- Definition dprog_impl (prg : dprog) : nat -> (fact -> Prop) -> Prop :=
+ Definition dprog_impl (prg : dprog) : nat -> fact -> Prop :=
    let init_db := rules_impl (fun _ => False) prg.(dprog_init) in
    dblocks_impl prg.(dprog_blks) init_db.
 End WithMap.

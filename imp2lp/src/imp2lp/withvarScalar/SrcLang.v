@@ -126,21 +126,45 @@ Section WithMap.
       | FRet => None
       end.
   End WithGstr.
-
+(* ??? remove
   Variant cfg_step (g_s : cfg_static) (g_d : cfg_dynamic) : cfg_dynamic -> Prop :=
     | CS_mk n asgns fl str' ptr' :
       g_d.(ptr) = Some n ->
       nth_error g_s.(blks) n = Some (Blk asgns fl) ->
       str' = List.map (interp_expr g_d.(str)) asgns ->
       ptr' = flow_step g_d.(str) fl ->
-      cfg_step g_s g_d {| str:=str'; ptr:=ptr' |}.
+      cfg_step g_s g_d {| str:=str'; ptr:=ptr' |}. *)
 
-    Inductive cfg_steps (g_s : cfg_static) : cfg_dynamic -> cfg_dynamic -> Prop :=
-    | CSS_refl g_d : cfg_steps g_s g_d g_d
-    | CSS_trans g_d0 g_d1 g_d2 :
-      cfg_steps g_s g_d0 g_d1 ->
-      cfg_step g_s g_d1 g_d2 ->
-      cfg_steps g_s g_d0 g_d2.
+  Definition cfg_step (g_s : cfg_static) (g_d : cfg_dynamic) : option cfg_dynamic :=
+    match g_d.(ptr) with
+    | Some n =>
+        match nth_error g_s.(blks) n with
+        | Some (Blk asgns fl) =>
+            let str' := List.map (interp_expr g_d.(str)) asgns in
+            let ptr' := flow_step g_d.(str) fl in
+            Some {| str := str'; ptr := ptr' |}
+        | None => None
+        end
+    | None => None
+    end.
+
+(* ??? remove
+  Inductive cfg_steps (g_s : cfg_static) : cfg_dynamic -> cfg_dynamic -> Prop :=
+  | CSS_refl g_d : cfg_steps g_s g_d g_d
+  | CSS_trans g_d0 g_d1 g_d2 :
+    cfg_steps g_s g_d0 g_d1 ->
+    cfg_step g_s g_d1 g_d2 ->
+    cfg_steps g_s g_d0 g_d2. *)
+
+  Fixpoint cfg_steps (g_s : cfg_static) (g_d : cfg_dynamic) (t : nat) : option cfg_dynamic :=
+    match t with
+    | O => Some g_d
+    | S t => match cfg_steps g_s g_d t with
+             | Some g_d' => cfg_step g_s g_d'
+             | None => None
+             end
+    end.
+
   Section WithGsig.
     Context (g_sig : list type).
 
@@ -311,6 +335,7 @@ Section WithMap.
     case_match; auto.
   Qed.
 
+(* ??? remove
   Theorem cfg_type_preservation : forall g_s g_d g_d',
       well_typed_cfg {| sig_blks := g_s; str_ptr := g_d |} ->
       cfg_steps g_s g_d g_d' ->
@@ -331,6 +356,49 @@ Section WithMap.
     1:{ apply asgns_type_sound; assumption. }
     1:{ eapply flow_type_sound; eassumption. }
   Qed.
+ *)
+  Ltac apply_nth_error_In :=
+    lazymatch goal with
+      H: nth_error _ _ = Some _ |- _ =>
+        apply nth_error_In in H
+    end.
+
+  Ltac invert_well_typed_block :=
+    lazymatch goal with
+      H: well_typed_block _ _ _ |- _ =>
+        inversion H; subst; clear H
+    end.
+
+  Lemma cfg_step_preservation : forall g_s g_d g_d',
+      well_typed_cfg {| sig_blks := g_s; str_ptr := g_d |} ->
+      cfg_step g_s g_d = Some g_d' ->
+      well_typed_cfg {| sig_blks := g_s; str_ptr := g_d' |}.
+  Proof.
+    inversion 1; cbn in *.
+    unfold cfg_step; intros.
+    repeat destruct_match_hyp; try discriminate.
+    do_injection; clear_refl.
+    constructor; cbn; intuition idtac.
+    all:
+      apply_nth_error_In;
+      apply_Forall_In;
+      invert_well_typed_block.
+    1:{ apply asgns_type_sound; assumption. }
+    1:{ eapply flow_type_sound; eassumption. }
+  Qed.
+
+  Theorem cfg_steps_preservation : forall g_s ts g_d g_d',
+      well_typed_cfg {| sig_blks := g_s; str_ptr := g_d |} ->
+      cfg_steps g_s g_d ts = Some g_d' ->
+      well_typed_cfg {| sig_blks := g_s; str_ptr := g_d' |}.
+  Proof.
+    induction ts; cbn; intros.
+    1:{ do_injection; assumption. }
+    1:{ destruct_match_hyp; try discriminate.
+        eapply cfg_step_preservation.
+        2: eauto.
+        1: eapply IHts; eauto. }
+  Qed.
 
   Lemma lt_length__nth_error : forall A (l : list A) n,
       n < List.length l ->
@@ -345,6 +413,7 @@ Section WithMap.
     destruct_exists. intuition eauto.
   Qed.
 
+  (* ??? remove
   Theorem cfg_type_progress : forall g_s g_d,
       well_typed_cfg {| sig_blks := g_s; str_ptr := g_d |} ->
       match g_d.(ptr) with
@@ -358,5 +427,24 @@ Section WithMap.
     eapply lt_length__nth_error in H3; destruct_exists.
     intuition idtac. destruct x.
     eexists. econstructor; eauto.
+  Qed. *)
+
+  Theorem cfg_step_progress : forall g_s g_d b,
+      well_typed_cfg {| sig_blks := g_s; str_ptr := g_d |} ->
+      g_d.(ptr) = Some b ->
+      exists g_d', cfg_step g_s g_d = Some g_d'.
+  Proof.
+    inversion 1; cbn in *; subst.
+    unfold cfg_step.
+    intros; repeat rewrite_l_to_r.
+    intuition idtac.
+    lazymatch goal with
+      H: _ < _ |- _ =>
+        apply nth_error_Some in H
+    end.
+    case_match; intuition idtac.
+    apply_nth_error_In; apply_Forall_In.
+    case_match; invert_well_typed_block.
+    eauto.
   Qed.
 End WithMap.
