@@ -181,8 +181,8 @@ Definition fact_is_lowered_from_str (f : fact) (str : list value) : Prop :=
                  end.
 
 Definition fact_is_lowered_from_ptr (f : fact) (ptr : option nat) : Prop :=
-  (exists n vs, f = mk_fact (blk_rel n) vs /\ ptr = Some n) \/
-    (exists vs, f = mk_fact terminate_rel vs /\ ptr = None).
+  (exists n, f = mk_fact (blk_rel n) [] /\ ptr = Some n) \/
+    (f = mk_fact terminate_rel [] /\ ptr = None).
 
 Definition fact_is_lowered_from (f : fact) (g_d : cfg_dynamic) : Prop :=
   fact_is_lowered_from_str f g_d.(str) \/
@@ -613,9 +613,13 @@ Section WithMap.
     1:{ case_match; invert_to_interp_clause;
         intuition idtac; cbn in *; subst.
         1:{ right; left.
-            repeat eexists. }
+            repeat eexists.
+            invert_Forall2.
+            reflexivity. }
         1:{ right; right.
-            repeat eexists. } }
+            repeat eexists.
+            invert_Forall2.
+            reflexivity. } }
     1:{ eapply lower_init_str'_sound in H2; eauto.
         repeat destruct_exists; intuition idtac; subst.
         invert_mk_fact; cbn in *.

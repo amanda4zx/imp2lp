@@ -5,11 +5,16 @@ From coqutil Require Import Map.Interface.
 Import ListNotations.
 
 (* A structured Datalog IR for a scalar source language allowing loops  *)
+Variant global_rel : Type :=
+  | mut_rel : nat -> global_rel
+  | terminate_rel : global_rel
+  | blk_rel : nat -> global_rel.
+
 Variant rel : Type :=
-  | mut_rel : nat -> rel
-  | terminate_rel : rel
-  | aux_rel : nat -> rel
-  | blk_rel : nat -> rel.
+  | glob_rel : global_rel -> rel
+  | aux_rel : nat -> rel.
+
+Coercion glob_rel : global_rel >-> rel.
 
 Inductive dexpr : Type :=
 | DVar (a : nat)
