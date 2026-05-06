@@ -350,6 +350,12 @@ Section WithMap.
         destruct H
     end.
 
+  Ltac destruct_or :=
+    lazymatch goal with
+      H: _ \/ _ |- _ =>
+        destruct H
+    end.
+
   Lemma Forall2_nth_error_l : forall A B (P : A -> B -> Prop) l1 l2,
       Forall2 P l1 l2 ->
       forall n v1,
@@ -1146,21 +1152,33 @@ Section WithMap.
   Ltac invert_root_of_pftree :=
     destruct_In;
     [
-    | try rewrite in_app_iff in *; intuition idtac;
+    | try rewrite in_app_iff in *;
+      intuition idtac;
       apply_lower_expr'_concl_namespace; eauto;
-      rewrite_l_to_r; intuition idtac;
+      repeat (destruct_match_hyp; intuition idtac); subst;
+      invert_rule_impl_non_meta;
+      repeat invert_Exists;
+      invert_interp_clause; intuition idtac;
+      invert_normal_fact;
+      rewrite_l_to_r;
+      do_injection; clear_refl;
       try contra_S_le_self;
-      try (apply_lower_expr'_in_lt_out;
-           contra_S_lt_le_self) ];
-    cbn -[In] in *; repeat invert_Forall2;
-    repeat invert_interp_clause;
-    repeat lazymatch goal with
-        y: fact |- _ =>
-          destruct y
-      end;
-    cbn -[In] in *;
+      try
+        (apply_lower_expr'_in_lt_out; contra_S_lt_le_self) ];
+
+    invert_rule_impl_non_meta;
+    repeat invert_Exists;
+    invert_interp_clause; intuition idtac; cbn in *;
+    invert_normal_fact;
     repeat invert_Forall2;
-    repeat invert_Forall.
+    repeat invert_interp_clause; intuition idtac; cbn in *;
+    subst;
+    repeat invert_Forall2; repeat invert_interp_dexpr; cbn in *;
+    repeat invert_Forall2; repeat invert_interp_dexpr; cbn in *;
+    repeat invert_Forall;
+    repeat (destruct_match_hyp; try discriminate; subst);
+    do_injection; clear_refl;
+    rewrite_l_to_r; do_injection; clear_refl.
 
   Lemma lower_expr_sound : forall g_sig g_d e t db,
       str_wf g_sig (SrcLang.str g_d) ->
@@ -1216,31 +1234,7 @@ Section WithMap.
       repeat destruct_match_hyp; cbn in *; invert_pair.
       rewrite Exists_exists in *.
       destruct_exists; intuition idtac.
-      destruct_In.
-      2:{ (* root of pftree *)
-        try rewrite in_app_iff in *;
-        intuition idtac. apply_lower_expr'_concl_namespace; eauto.
-        repeat (destruct_match_hyp; intuition idtac); subst.
-        invert_rule_impl_non_meta.
-        repeat invert_Exists.
-        invert_interp_clause; intuition idtac.
-        invert_normal_fact.
-        rewrite_l_to_r.
-        do_injection; clear_refl.
-        contra_S_le_self. }
-      invert_rule_impl_non_meta.
-      repeat invert_Exists.
-      invert_interp_clause; intuition idtac; cbn in *.
-      invert_normal_fact.
-      repeat invert_Forall2.
-      invert_interp_clause; intuition idtac; cbn in *.
-      subst.
-      repeat invert_Forall2; repeat invert_interp_dexpr; cbn in *.
-      repeat invert_Forall2; repeat invert_interp_dexpr; cbn in *.
-      repeat invert_Forall.
-      destruct_match_hyp; try discriminate; subst.
-      do_injection; clear_refl.
-      rewrite_l_to_r. do_injection; clear_refl.
+      invert_root_of_pftree.
       apply_prog_impl_cons_strengthen; cbn.
       2:{ eapply lower_expr'_normal_rules; eauto. }
       2:{ intros.
@@ -1268,110 +1262,39 @@ Section WithMap.
       end; eauto.
       invert_cons.
       reflexivity. }
-    1:{ repeat destruct_match_hyp; cbn in *; invert_pair.
-        rewrite Exists_exists in *.
-        destruct_exists; intuition idtac.
-        destruct_In.
-        2:{ try rewrite in_app_iff in *;
-            intuition idtac;
-            apply_lower_expr'_concl_namespace; eauto;
-            repeat (destruct_match_hyp; intuition idtac); subst;
-            invert_rule_impl_non_meta;
-            repeat invert_Exists;
-            invert_interp_clause; intuition idtac;
-            invert_normal_fact;
-            rewrite_l_to_r;
-            do_injection; clear_refl;
-            try contra_S_le_self;
-            try
-              (apply_lower_expr'_in_lt_out; contra_S_lt_le_self). }
+    all: (* binops *)
+      repeat destruct_match_hyp; cbn in *; invert_pair;
+        rewrite Exists_exists in *;
+        destruct_exists; intuition idtac;
+        invert_root_of_pftree;
 
-      invert_rule_impl_non_meta;
-        repeat invert_Exists;
-        invert_interp_clause; intuition idtac; cbn in *;
-        invert_normal_fact;
-        repeat invert_Forall2;
-        repeat invert_interp_clause; intuition idtac; cbn in *;
-        subst;
-        repeat invert_Forall2; repeat invert_interp_dexpr; cbn in *;
-        repeat invert_Forall2; repeat invert_interp_dexpr; cbn in *;
-        repeat invert_Forall;
-        repeat (destruct_match_hyp; try discriminate; subst);
-        do_injection; clear_refl;
-        rewrite_l_to_r; do_injection; clear_refl.
-
-        apply_prog_impl_cons_strengthen; cbn.
-        2:{ rewrite Forall_app; split;
-            eapply lower_expr'_normal_rules; eauto. }
-        2:{ intros; rewrite in_app_iff in *; intuition idtac.
-            1:{ apply_lower_expr'_concl_namespace_fresh; eauto.
-                apply_lower_expr'_hyps_namespace; eauto.
-                repeat (case_match; intuition idtac; []).
-                1: do_injection; try contra_S_le_self;
-                try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self).
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac;  try contra_S_le_self;
-                      try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self). } }
-            1:{ apply_lower_expr'_concl_namespace_fresh; eauto.
-                apply_lower_expr'_hyps_namespace; eauto.
-                repeat (case_match; intuition idtac; []).
-                1: do_injection; try contra_S_le_self;
-                try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self).
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac;  try contra_S_le_self;
-                      try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self). } } }
-        2:{ intro contra.
-            repeat apply_lower_expr'_in_lt_out.
-            do_injection.
+        repeat (
+        apply_prog_impl_cons_strengthen; cbn;
+          [
+          | rewrite Forall_app; split;
+            eapply lower_expr'_normal_rules; eauto
+          | intros; rewrite in_app_iff in *; intuition idtac;
+            apply_lower_expr'_concl_namespace_fresh; eauto;
+            apply_lower_expr'_hyps_namespace; eauto;
+            repeat (case_match; intuition idtac; []);
+            [ do_injection; try contra_S_le_self;
+              try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self)
+            | rewrite Forall_forall; intros; apply_Forall_In;
+              lazymatch goal with
+                H: _ = ?x, _: context[?x] |- _ =>
+                  rewrite <- H in *
+              end;
+              intuition idtac;  try contra_S_le_self;
+              try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self) ]
+          | intro contra;
+            repeat apply_lower_expr'_in_lt_out;
+            do_injection;
             try (eapply PeanoNat.Nat.neq_succ_diag_r; eassumption);
-              try contra_S_lt_self. }
-
-
-        apply_prog_impl_cons_strengthen; cbn.
-         2:{ rewrite Forall_app; split;
-            eapply lower_expr'_normal_rules; eauto. }
-        2:{ intros; rewrite in_app_iff in *; intuition idtac.
-            1:{ apply_lower_expr'_concl_namespace_fresh; eauto.
-                apply_lower_expr'_hyps_namespace; eauto.
-                repeat (destruct_match_hyp; intuition idtac).
-                1: do_injection; try contra_S_le_self;
-                try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self).
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac;  try contra_S_le_self;
-                      try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self). } }
-            1:{ apply_lower_expr'_concl_namespace_fresh; eauto.
-                apply_lower_expr'_hyps_namespace; eauto.
-                repeat (destruct_match_hyp; intuition idtac).
-                1: do_injection; try contra_S_le_self;
-                try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self).
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac;  try contra_S_le_self;
-                      try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self). } } }
-        2:{ intro contra.
-            repeat apply_lower_expr'_in_lt_out.
-            do_injection.
-            try (eapply PeanoNat.Nat.neq_succ_diag_r; eassumption);
-              try contra_S_lt_self. }
-
+            try contra_S_lt_self ] );
 
 
         (* binop args *)
+        repeat (
         lazymatch goal with
         | H: prog_impl (?l1 ++ _) _ (normal_fact (aux_rel ?r) _),
             _: lower_expr' ?r _ = (?l1, _) |- _ =>
@@ -1379,870 +1302,47 @@ Section WithMap.
         | H: prog_impl (_ ++ ?l2) _ (normal_fact (aux_rel ?r) _),
             _: lower_expr' ?r _ = (?l2, _) |- _ =>
             eapply prog_impl_strengthen in H
-        end; intros; cbn.
-         2,3:  eapply lower_expr'_normal_rules; eauto.
-         2:{ repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
-                     apply_lower_expr'_hyps_namespace; eauto).
-                repeat (destruct_match_hyp; intuition idtac).
-                1: do_injection; try contra_S_le_self;
+        end; intros; cbn;
+        try eapply lower_expr'_normal_rules; eauto;
+        repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
+                apply_lower_expr'_hyps_namespace; eauto);
+        [
+        | repeat (destruct_match_hyp; intuition idtac);
+          [ do_injection; try contra_S_le_self;
+            repeat apply_lower_expr'_in_lt_out;
+            try contra_S_lt_le_self;
+            try contra_lt_le_self
+          | rewrite Forall_forall; intros; apply_Forall_In;
+            lazymatch goal with
+              H: _ = ?x, _: context[?x] |- _ =>
+                rewrite <- H in *
+            end;
+            intuition idtac; try contra_S_le_self;
+            repeat apply_lower_expr'_in_lt_out;
+            try contra_S_lt_le_self;
+                      try contra_lt_le_self ]
+         | repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
+                     apply_lower_expr'_hyps_namespace; eauto);
                 repeat apply_lower_expr'_in_lt_out;
-                try contra_S_lt_le_self;
-                try contra_lt_le_self.
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac; try contra_S_le_self;
-                repeat apply_lower_expr'_in_lt_out;
-                try contra_S_lt_le_self;
-                      try contra_lt_le_self. } }
-         2:{ repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
-                     apply_lower_expr'_hyps_namespace; eauto).
-                repeat apply_lower_expr'_in_lt_out.
-                repeat (destruct_match_hyp; intuition idtac).
+                repeat (destruct_match_hyp; intuition idtac);
                 do_injection; try contra_S_le_self;
                   repeat apply_lower_expr'_in_lt_out;
                   try contra_S_lt_le_self;
                   try contra_lt_le_self;
-                  try (eapply PeanoNat.Nat.lt_irrefl; eauto). }
-
-        (* binop args *)
-        lazymatch goal with
-        | H: prog_impl (?l1 ++ _) _ (normal_fact (aux_rel ?r) _),
-            _: lower_expr' ?r _ = (?l1, _) |- _ =>
-            eapply prog_impl_comm, prog_impl_strengthen in H
-        | H: prog_impl (_ ++ ?l2) _ (normal_fact (aux_rel ?r) _),
-            _: lower_expr' ?r _ = (?l2, _) |- _ =>
-            eapply prog_impl_strengthen in H
-        end; intros; cbn.
-         2,3:  eapply lower_expr'_normal_rules; eauto.
-         2:{ repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
-                     apply_lower_expr'_hyps_namespace; eauto).
-                repeat (destruct_match_hyp; intuition idtac).
-                1: do_injection; try contra_S_le_self;
-                repeat apply_lower_expr'_in_lt_out;
-                try contra_S_lt_le_self;
-                try contra_lt_le_self.
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac; try contra_S_le_self;
-                repeat apply_lower_expr'_in_lt_out;
-                try contra_S_lt_le_self;
-                      try contra_lt_le_self. } }
-         2:{ repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
-                     apply_lower_expr'_hyps_namespace; eauto).
-             repeat apply_lower_expr'_in_lt_out.
-             repeat (destruct_match_hyp; intuition idtac).
-             do_injection; try contra_S_le_self;
-               repeat apply_lower_expr'_in_lt_out;
-               try contra_S_lt_le_self;
-               try contra_lt_le_self;
-               try (eapply PeanoNat.Nat.lt_irrefl; eauto). }
+                  try (eapply PeanoNat.Nat.lt_irrefl; eauto) ]);
 
 
-         repeat apply_lower_expr_sound_IH;
-      repeat (invert_cons; clear_refl);
-      repeat apply_expr_type_sound;
-      repeat invert_type_of_value;
-      repeat invert_interp_dexpr;
-      repeat rewrite_expr_value;
-      repeat rewrite_l_to_r; cbn in *;
-           repeat (try clear_refl; try do_injection);
-           try rewrite dvalue_eqb_iff_value_eqb;
-      congruence. }
-
-
-(*
-      invert_root_of_pftree.
-      (* unop argument *)
-      strengthen_away_prog_impl_cons.
-      apply_lower_expr_sound_IH.
-      invert_cons.
-      eapply expr_type_sound in H1; eauto.
-      inversion H1; subst.
-      rewrite_expr_value.
-      repeat invert_interp_dexpr; rewrite_l_to_r.
-      do_injection. reflexivity. }
-    all:
-      repeat destruct_match_hyp; cbn in *;
-      invert_to_interp_clause; cbn in *;
-      invert_pair;
-      invert_root_of_pftree;
-
-      (* binop arguments *)
-      repeat strengthen_away_prog_impl_cons;
-      repeat (lazymatch goal with
-              | H: prog_impl _ (?l1 ++ _) {| fact_rel := aux_rel ?r |},
-                  _: lower_expr' ?r _ = (?l1, _) |- _ =>
-                  eapply prog_impl_comm, prog_impl_strengthen in H
-              | H: prog_impl _ (_ ++ ?l2) {| fact_rel := aux_rel ?r |},
-                  _: lower_expr' ?r _ = (?l2, _) |- _ =>
-                  eapply prog_impl_strengthen in H
-              end; intros; cbn;
-              [
-              | repeat lazymatch goal with
-                    H: lower_expr' _ _ = _ |- _ =>
-                      let H_io := fresh "H_io" in
-                      let H_concl := fresh "H_concl" in
-                      let H_hyps := fresh "H_hyps" in
-                      apply lower_expr'_in_lt_out in H as H_io;
-                      eapply lower_expr'_concl_namespace in H as H_concl; eauto;
-                      eapply lower_expr'_hyps_namespace in H as H_hyps; eauto;
-                      clear H
-                  end;
-                repeat destruct_match_hyp; intuition idtac;
-                try (rewrite Forall_forall; intros;
-                     apply_Forall_In;
-                     destruct_match_hyp; intuition idtac; try discriminate);
-                do_injection; contra_lt_le_self
-              | apply_lower_expr'_concl_namespace; eauto;
-                apply_lower_expr'_in_lt_out;
-                destruct_match_hyp; intuition idtac;
-                do_injection;
-                try contra_lt_le_self;
-                try eapply PeanoNat.Nat.lt_irrefl; eauto ]);
-
-      (* equate the values *)
-      repeat apply_lower_expr_sound_IH;
-      repeat (invert_cons; clear_refl);
-      repeat apply_expr_type_sound;
-      repeat invert_type_of_value;
-      repeat invert_interp_dexpr;
-      repeat rewrite_expr_value;
-      repeat rewrite_l_to_r; cbn in *;
-      repeat (try clear_refl; try do_injection);
-      try rewrite dvalue_eqb_iff_value_eqb;
-      reflexivity.
-              Qed. *)
-
-    1:{ repeat destruct_match_hyp; cbn in *; invert_pair.
-        rewrite Exists_exists in *.
-        destruct_exists; intuition idtac.
-        destruct_In.
-        2:{ try rewrite in_app_iff in *;
-            intuition idtac;
-            apply_lower_expr'_concl_namespace; eauto;
-            repeat (destruct_match_hyp; intuition idtac); subst;
-            invert_rule_impl_non_meta;
-            repeat invert_Exists;
-            invert_interp_clause; intuition idtac;
-            invert_normal_fact;
-            rewrite_l_to_r;
-            do_injection; clear_refl;
-            try contra_S_le_self;
-            try
-              (apply_lower_expr'_in_lt_out; contra_S_lt_le_self). }
-
-      invert_rule_impl_non_meta;
-        repeat invert_Exists;
-        invert_interp_clause; intuition idtac; cbn in *;
-        invert_normal_fact;
-        repeat invert_Forall2;
-        repeat invert_interp_clause; intuition idtac; cbn in *;
-        subst;
-        repeat invert_Forall2; repeat invert_interp_dexpr; cbn in *;
-        repeat invert_Forall2; repeat invert_interp_dexpr; cbn in *;
-        repeat invert_Forall;
-        repeat (destruct_match_hyp; try discriminate; subst).
-
-        1:{ do_injection; clear_refl;
-        rewrite_l_to_r; do_injection; clear_refl.
-
-        apply_prog_impl_cons_strengthen; cbn.
-        2:{ rewrite Forall_app; split;
-            eapply lower_expr'_normal_rules; eauto. }
-        2:{ intros; rewrite in_app_iff in *; intuition idtac.
-            1:{ apply_lower_expr'_concl_namespace_fresh; eauto.
-                apply_lower_expr'_hyps_namespace; eauto.
-                repeat (case_match; intuition idtac; []).
-                1: do_injection; try contra_S_le_self;
-                try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self).
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac;  try contra_S_le_self;
-                      try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self). } }
-            1:{ apply_lower_expr'_concl_namespace_fresh; eauto.
-                apply_lower_expr'_hyps_namespace; eauto.
-                repeat (case_match; intuition idtac; []).
-                1: do_injection; try contra_S_le_self;
-                try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self).
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac;  try contra_S_le_self;
-                      try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self). } } }
-        2:{ intro contra.
-            repeat apply_lower_expr'_in_lt_out.
-            do_injection.
-            try (eapply PeanoNat.Nat.neq_succ_diag_r; eassumption);
-              try contra_S_lt_self. }
-
-
-        apply_prog_impl_cons_strengthen; cbn.
-         2:{ rewrite Forall_app; split;
-            eapply lower_expr'_normal_rules; eauto. }
-        2:{ intros; rewrite in_app_iff in *; intuition idtac.
-            1:{ apply_lower_expr'_concl_namespace_fresh; eauto.
-                apply_lower_expr'_hyps_namespace; eauto.
-                repeat (destruct_match_hyp; intuition idtac).
-                1: do_injection; try contra_S_le_self;
-                try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self).
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac;  try contra_S_le_self;
-                      try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self). } }
-            1:{ apply_lower_expr'_concl_namespace_fresh; eauto.
-                apply_lower_expr'_hyps_namespace; eauto.
-                repeat (destruct_match_hyp; intuition idtac).
-                1: do_injection; try contra_S_le_self;
-                try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self).
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac;  try contra_S_le_self;
-                      try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self). } } }
-        2:{ intro contra.
-            repeat apply_lower_expr'_in_lt_out.
-            do_injection.
-            try (eapply PeanoNat.Nat.neq_succ_diag_r; eassumption);
-              try contra_S_lt_self. }
-
-
-
-        (* binop args *)
-        lazymatch goal with
-        | H: prog_impl (?l1 ++ _) _ (normal_fact (aux_rel ?r) _),
-            _: lower_expr' ?r _ = (?l1, _) |- _ =>
-            eapply prog_impl_comm, prog_impl_strengthen in H
-        | H: prog_impl (_ ++ ?l2) _ (normal_fact (aux_rel ?r) _),
-            _: lower_expr' ?r _ = (?l2, _) |- _ =>
-            eapply prog_impl_strengthen in H
-        end; intros; cbn.
-         2,3:  eapply lower_expr'_normal_rules; eauto.
-         2:{ repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
-                     apply_lower_expr'_hyps_namespace; eauto).
-                repeat (destruct_match_hyp; intuition idtac).
-                1: do_injection; try contra_S_le_self;
-                repeat apply_lower_expr'_in_lt_out;
-                try contra_S_lt_le_self;
-                try contra_lt_le_self.
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac; try contra_S_le_self;
-                repeat apply_lower_expr'_in_lt_out;
-                try contra_S_lt_le_self;
-                      try contra_lt_le_self. } }
-         2:{ repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
-                     apply_lower_expr'_hyps_namespace; eauto).
-                repeat apply_lower_expr'_in_lt_out.
-                repeat (destruct_match_hyp; intuition idtac).
-                do_injection; try contra_S_le_self;
-                  repeat apply_lower_expr'_in_lt_out;
-                  try contra_S_lt_le_self;
-                  try contra_lt_le_self;
-                  try (eapply PeanoNat.Nat.lt_irrefl; eauto). }
-
-        (* binop args *)
-        lazymatch goal with
-        | H: prog_impl (?l1 ++ _) _ (normal_fact (aux_rel ?r) _),
-            _: lower_expr' ?r _ = (?l1, _) |- _ =>
-            eapply prog_impl_comm, prog_impl_strengthen in H
-        | H: prog_impl (_ ++ ?l2) _ (normal_fact (aux_rel ?r) _),
-            _: lower_expr' ?r _ = (?l2, _) |- _ =>
-            eapply prog_impl_strengthen in H
-        end; intros; cbn.
-         2,3:  eapply lower_expr'_normal_rules; eauto.
-         2:{ repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
-                     apply_lower_expr'_hyps_namespace; eauto).
-                repeat (destruct_match_hyp; intuition idtac).
-                1: do_injection; try contra_S_le_self;
-                repeat apply_lower_expr'_in_lt_out;
-                try contra_S_lt_le_self;
-                try contra_lt_le_self.
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac; try contra_S_le_self;
-                repeat apply_lower_expr'_in_lt_out;
-                try contra_S_lt_le_self;
-                      try contra_lt_le_self. } }
-         2:{ repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
-                     apply_lower_expr'_hyps_namespace; eauto).
-             repeat apply_lower_expr'_in_lt_out.
-             repeat (destruct_match_hyp; intuition idtac).
-             do_injection; try contra_S_le_self;
-               repeat apply_lower_expr'_in_lt_out;
-               try contra_S_lt_le_self;
-               try contra_lt_le_self;
-               try (eapply PeanoNat.Nat.lt_irrefl; eauto). }
-
-
-         repeat apply_lower_expr_sound_IH;
-      repeat (invert_cons; clear_refl);
-      repeat apply_expr_type_sound;
-      repeat invert_type_of_value;
-      repeat invert_interp_dexpr;
-      repeat rewrite_expr_value;
-      repeat rewrite_l_to_r; cbn in *;
-           repeat (try clear_refl; try do_injection);
-           try rewrite dvalue_eqb_iff_value_eqb;
-           congruence. }
-
-         1:{ do_injection; clear_refl;
-        rewrite_l_to_r; do_injection; clear_refl.
-
-        apply_prog_impl_cons_strengthen; cbn.
-        2:{ rewrite Forall_app; split;
-            eapply lower_expr'_normal_rules; eauto. }
-        2:{ intros; rewrite in_app_iff in *; intuition idtac.
-            1:{ apply_lower_expr'_concl_namespace_fresh; eauto.
-                apply_lower_expr'_hyps_namespace; eauto.
-                repeat (case_match; intuition idtac; []).
-                1: do_injection; try contra_S_le_self;
-                try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self).
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac;  try contra_S_le_self;
-                      try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self). } }
-            1:{ apply_lower_expr'_concl_namespace_fresh; eauto.
-                apply_lower_expr'_hyps_namespace; eauto.
-                repeat (case_match; intuition idtac; []).
-                1: do_injection; try contra_S_le_self;
-                try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self).
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac;  try contra_S_le_self;
-                      try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self). } } }
-        2:{ intro contra.
-            repeat apply_lower_expr'_in_lt_out.
-            do_injection.
-            try (eapply PeanoNat.Nat.neq_succ_diag_r; eassumption);
-              try contra_S_lt_self. }
-
-
-        apply_prog_impl_cons_strengthen; cbn.
-         2:{ rewrite Forall_app; split;
-            eapply lower_expr'_normal_rules; eauto. }
-        2:{ intros; rewrite in_app_iff in *; intuition idtac.
-            1:{ apply_lower_expr'_concl_namespace_fresh; eauto.
-                apply_lower_expr'_hyps_namespace; eauto.
-                repeat (destruct_match_hyp; intuition idtac).
-                1: do_injection; try contra_S_le_self;
-                try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self).
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac;  try contra_S_le_self;
-                      try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self). } }
-            1:{ apply_lower_expr'_concl_namespace_fresh; eauto.
-                apply_lower_expr'_hyps_namespace; eauto.
-                repeat (destruct_match_hyp; intuition idtac).
-                1: do_injection; try contra_S_le_self;
-                try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self).
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac;  try contra_S_le_self;
-                      try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self). } } }
-        2:{ intro contra.
-            repeat apply_lower_expr'_in_lt_out.
-            do_injection.
-            try (eapply PeanoNat.Nat.neq_succ_diag_r; eassumption);
-              try contra_S_lt_self. }
-
-
-
-        (* binop args *)
-        lazymatch goal with
-        | H: prog_impl (?l1 ++ _) _ (normal_fact (aux_rel ?r) _),
-            _: lower_expr' ?r _ = (?l1, _) |- _ =>
-            eapply prog_impl_comm, prog_impl_strengthen in H
-        | H: prog_impl (_ ++ ?l2) _ (normal_fact (aux_rel ?r) _),
-            _: lower_expr' ?r _ = (?l2, _) |- _ =>
-            eapply prog_impl_strengthen in H
-        end; intros; cbn.
-         2,3:  eapply lower_expr'_normal_rules; eauto.
-         2:{ repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
-                     apply_lower_expr'_hyps_namespace; eauto).
-                repeat (destruct_match_hyp; intuition idtac).
-                1: do_injection; try contra_S_le_self;
-                repeat apply_lower_expr'_in_lt_out;
-                try contra_S_lt_le_self;
-                try contra_lt_le_self.
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac; try contra_S_le_self;
-                repeat apply_lower_expr'_in_lt_out;
-                try contra_S_lt_le_self;
-                      try contra_lt_le_self. } }
-         2:{ repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
-                     apply_lower_expr'_hyps_namespace; eauto).
-                repeat apply_lower_expr'_in_lt_out.
-                repeat (destruct_match_hyp; intuition idtac).
-                do_injection; try contra_S_le_self;
-                  repeat apply_lower_expr'_in_lt_out;
-                  try contra_S_lt_le_self;
-                  try contra_lt_le_self;
-                  try (eapply PeanoNat.Nat.lt_irrefl; eauto). }
-
-        (* binop args *)
-        lazymatch goal with
-        | H: prog_impl (?l1 ++ _) _ (normal_fact (aux_rel ?r) _),
-            _: lower_expr' ?r _ = (?l1, _) |- _ =>
-            eapply prog_impl_comm, prog_impl_strengthen in H
-        | H: prog_impl (_ ++ ?l2) _ (normal_fact (aux_rel ?r) _),
-            _: lower_expr' ?r _ = (?l2, _) |- _ =>
-            eapply prog_impl_strengthen in H
-        end; intros; cbn.
-         2,3:  eapply lower_expr'_normal_rules; eauto.
-         2:{ repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
-                     apply_lower_expr'_hyps_namespace; eauto).
-                repeat (destruct_match_hyp; intuition idtac).
-                1: do_injection; try contra_S_le_self;
-                repeat apply_lower_expr'_in_lt_out;
-                try contra_S_lt_le_self;
-                try contra_lt_le_self.
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac; try contra_S_le_self;
-                repeat apply_lower_expr'_in_lt_out;
-                try contra_S_lt_le_self;
-                      try contra_lt_le_self. } }
-         2:{ repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
-                     apply_lower_expr'_hyps_namespace; eauto).
-             repeat apply_lower_expr'_in_lt_out.
-             repeat (destruct_match_hyp; intuition idtac).
-             do_injection; try contra_S_le_self;
-               repeat apply_lower_expr'_in_lt_out;
-               try contra_S_lt_le_self;
-               try contra_lt_le_self;
-               try (eapply PeanoNat.Nat.lt_irrefl; eauto). }
-
-
-         repeat apply_lower_expr_sound_IH;
-      repeat (invert_cons; clear_refl);
-      repeat apply_expr_type_sound;
-      repeat invert_type_of_value;
-      repeat invert_interp_dexpr;
-      repeat rewrite_expr_value;
-      repeat rewrite_l_to_r; cbn in *;
-           repeat (try clear_refl; try do_injection);
-           try rewrite dvalue_eqb_iff_value_eqb;
-           congruence. } }
-
-
-
-
-
-    1:{ repeat destruct_match_hyp; cbn in *; invert_pair.
-        rewrite Exists_exists in *.
-        destruct_exists; intuition idtac.
-        destruct_In.
-        2:{ try rewrite in_app_iff in *;
-            intuition idtac;
-            apply_lower_expr'_concl_namespace; eauto;
-            repeat (destruct_match_hyp; intuition idtac); subst;
-            invert_rule_impl_non_meta;
-            repeat invert_Exists;
-            invert_interp_clause; intuition idtac;
-            invert_normal_fact;
-            rewrite_l_to_r;
-            do_injection; clear_refl;
-            try contra_S_le_self;
-            try
-              (apply_lower_expr'_in_lt_out; contra_S_lt_le_self). }
-
-      invert_rule_impl_non_meta;
-        repeat invert_Exists;
-        invert_interp_clause; intuition idtac; cbn in *;
-        invert_normal_fact;
-        repeat invert_Forall2;
-        repeat invert_interp_clause; intuition idtac; cbn in *;
-        subst;
-        repeat invert_Forall2; repeat invert_interp_dexpr; cbn in *;
-        repeat invert_Forall2; repeat invert_interp_dexpr; cbn in *;
-        repeat invert_Forall;
-        repeat (destruct_match_hyp; try discriminate; subst);
-        do_injection; clear_refl;
-        rewrite_l_to_r; do_injection; clear_refl.
-
-        apply_prog_impl_cons_strengthen; cbn.
-        2:{ rewrite Forall_app; split;
-            eapply lower_expr'_normal_rules; eauto. }
-        2:{ intros; rewrite in_app_iff in *; intuition idtac.
-            1:{ apply_lower_expr'_concl_namespace_fresh; eauto.
-                apply_lower_expr'_hyps_namespace; eauto.
-                repeat (case_match; intuition idtac; []).
-                1: do_injection; try contra_S_le_self;
-                try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self).
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac;  try contra_S_le_self;
-                      try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self). } }
-            1:{ apply_lower_expr'_concl_namespace_fresh; eauto.
-                apply_lower_expr'_hyps_namespace; eauto.
-                repeat (case_match; intuition idtac; []).
-                1: do_injection; try contra_S_le_self;
-                try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self).
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac;  try contra_S_le_self;
-                      try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self). } } }
-        2:{ intro contra.
-            repeat apply_lower_expr'_in_lt_out.
-            do_injection.
-            try (eapply PeanoNat.Nat.neq_succ_diag_r; eassumption);
-              try contra_S_lt_self. }
-
-
-        apply_prog_impl_cons_strengthen; cbn.
-         2:{ rewrite Forall_app; split;
-            eapply lower_expr'_normal_rules; eauto. }
-        2:{ intros; rewrite in_app_iff in *; intuition idtac.
-            1:{ apply_lower_expr'_concl_namespace_fresh; eauto.
-                apply_lower_expr'_hyps_namespace; eauto.
-                repeat (destruct_match_hyp; intuition idtac).
-                1: do_injection; try contra_S_le_self;
-                try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self).
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac;  try contra_S_le_self;
-                      try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self). } }
-            1:{ apply_lower_expr'_concl_namespace_fresh; eauto.
-                apply_lower_expr'_hyps_namespace; eauto.
-                repeat (destruct_match_hyp; intuition idtac).
-                1: do_injection; try contra_S_le_self;
-                try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self).
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac;  try contra_S_le_self;
-                      try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self). } } }
-        2:{ intro contra.
-            repeat apply_lower_expr'_in_lt_out.
-            do_injection.
-            try (eapply PeanoNat.Nat.neq_succ_diag_r; eassumption);
-              try contra_S_lt_self. }
-
-
-
-        (* binop args *)
-        lazymatch goal with
-        | H: prog_impl (?l1 ++ _) _ (normal_fact (aux_rel ?r) _),
-            _: lower_expr' ?r _ = (?l1, _) |- _ =>
-            eapply prog_impl_comm, prog_impl_strengthen in H
-        | H: prog_impl (_ ++ ?l2) _ (normal_fact (aux_rel ?r) _),
-            _: lower_expr' ?r _ = (?l2, _) |- _ =>
-            eapply prog_impl_strengthen in H
-        end; intros; cbn.
-         2,3:  eapply lower_expr'_normal_rules; eauto.
-         2:{ repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
-                     apply_lower_expr'_hyps_namespace; eauto).
-                repeat (destruct_match_hyp; intuition idtac).
-                1: do_injection; try contra_S_le_self;
-                repeat apply_lower_expr'_in_lt_out;
-                try contra_S_lt_le_self;
-                try contra_lt_le_self.
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac; try contra_S_le_self;
-                repeat apply_lower_expr'_in_lt_out;
-                try contra_S_lt_le_self;
-                      try contra_lt_le_self. } }
-         2:{ repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
-                     apply_lower_expr'_hyps_namespace; eauto).
-                repeat apply_lower_expr'_in_lt_out.
-                repeat (destruct_match_hyp; intuition idtac).
-                do_injection; try contra_S_le_self;
-                  repeat apply_lower_expr'_in_lt_out;
-                  try contra_S_lt_le_self;
-                  try contra_lt_le_self;
-                  try (eapply PeanoNat.Nat.lt_irrefl; eauto). }
-
-        (* binop args *)
-        lazymatch goal with
-        | H: prog_impl (?l1 ++ _) _ (normal_fact (aux_rel ?r) _),
-            _: lower_expr' ?r _ = (?l1, _) |- _ =>
-            eapply prog_impl_comm, prog_impl_strengthen in H
-        | H: prog_impl (_ ++ ?l2) _ (normal_fact (aux_rel ?r) _),
-            _: lower_expr' ?r _ = (?l2, _) |- _ =>
-            eapply prog_impl_strengthen in H
-        end; intros; cbn.
-         2,3:  eapply lower_expr'_normal_rules; eauto.
-         2:{ repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
-                     apply_lower_expr'_hyps_namespace; eauto).
-                repeat (destruct_match_hyp; intuition idtac).
-                1: do_injection; try contra_S_le_self;
-                repeat apply_lower_expr'_in_lt_out;
-                try contra_S_lt_le_self;
-                try contra_lt_le_self.
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac; try contra_S_le_self;
-                repeat apply_lower_expr'_in_lt_out;
-                try contra_S_lt_le_self;
-                      try contra_lt_le_self. } }
-         2:{ repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
-                     apply_lower_expr'_hyps_namespace; eauto).
-             repeat apply_lower_expr'_in_lt_out.
-             repeat (destruct_match_hyp; intuition idtac).
-             do_injection; try contra_S_le_self;
-               repeat apply_lower_expr'_in_lt_out;
-               try contra_S_lt_le_self;
-               try contra_lt_le_self;
-               try (eapply PeanoNat.Nat.lt_irrefl; eauto). }
-
-
-         repeat apply_lower_expr_sound_IH;
-      repeat (invert_cons; clear_refl);
-      repeat apply_expr_type_sound;
-      repeat invert_type_of_value;
-      repeat invert_interp_dexpr;
-      repeat rewrite_expr_value;
-      repeat rewrite_l_to_r; cbn in *;
-           repeat (try clear_refl; try do_injection);
-           try rewrite dvalue_eqb_iff_value_eqb;
-      congruence. }
-
-    1:{ repeat destruct_match_hyp; cbn in *; invert_pair.
-        rewrite Exists_exists in *.
-        destruct_exists; intuition idtac.
-        destruct_In.
-        2:{ try rewrite in_app_iff in *;
-            intuition idtac;
-            apply_lower_expr'_concl_namespace; eauto;
-            repeat (destruct_match_hyp; intuition idtac); subst;
-            invert_rule_impl_non_meta;
-            repeat invert_Exists;
-            invert_interp_clause; intuition idtac;
-            invert_normal_fact;
-            rewrite_l_to_r;
-            do_injection; clear_refl;
-            try contra_S_le_self;
-            try
-              (apply_lower_expr'_in_lt_out; contra_S_lt_le_self). }
-
-      invert_rule_impl_non_meta;
-        repeat invert_Exists;
-        invert_interp_clause; intuition idtac; cbn in *;
-        invert_normal_fact;
-        repeat invert_Forall2;
-        repeat invert_interp_clause; intuition idtac; cbn in *;
-        subst;
-        repeat invert_Forall2; repeat invert_interp_dexpr; cbn in *;
-        repeat invert_Forall2; repeat invert_interp_dexpr; cbn in *;
-        repeat invert_Forall;
-        repeat (destruct_match_hyp; try discriminate; subst);
-        do_injection; clear_refl;
-        rewrite_l_to_r; do_injection; clear_refl.
-
-        apply_prog_impl_cons_strengthen; cbn.
-        2:{ rewrite Forall_app; split;
-            eapply lower_expr'_normal_rules; eauto. }
-        2:{ intros; rewrite in_app_iff in *; intuition idtac.
-            1:{ apply_lower_expr'_concl_namespace_fresh; eauto.
-                apply_lower_expr'_hyps_namespace; eauto.
-                repeat (case_match; intuition idtac; []).
-                1: do_injection; try contra_S_le_self;
-                try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self).
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac;  try contra_S_le_self;
-                      try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self). } }
-            1:{ apply_lower_expr'_concl_namespace_fresh; eauto.
-                apply_lower_expr'_hyps_namespace; eauto.
-                repeat (case_match; intuition idtac; []).
-                1: do_injection; try contra_S_le_self;
-                try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self).
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac;  try contra_S_le_self;
-                      try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self). } } }
-        2:{ intro contra.
-            repeat apply_lower_expr'_in_lt_out.
-            do_injection.
-            try (eapply PeanoNat.Nat.neq_succ_diag_r; eassumption);
-              try contra_S_lt_self. }
-
-
-        apply_prog_impl_cons_strengthen; cbn.
-         2:{ rewrite Forall_app; split;
-            eapply lower_expr'_normal_rules; eauto. }
-        2:{ intros; rewrite in_app_iff in *; intuition idtac.
-            1:{ apply_lower_expr'_concl_namespace_fresh; eauto.
-                apply_lower_expr'_hyps_namespace; eauto.
-                repeat (destruct_match_hyp; intuition idtac).
-                1: do_injection; try contra_S_le_self;
-                try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self).
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac;  try contra_S_le_self;
-                      try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self). } }
-            1:{ apply_lower_expr'_concl_namespace_fresh; eauto.
-                apply_lower_expr'_hyps_namespace; eauto.
-                repeat (destruct_match_hyp; intuition idtac).
-                1: do_injection; try contra_S_le_self;
-                try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self).
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac;  try contra_S_le_self;
-                      try (repeat apply_lower_expr'_in_lt_out; contra_S_lt_le_self). } } }
-        2:{ intro contra.
-            repeat apply_lower_expr'_in_lt_out.
-            do_injection.
-            try (eapply PeanoNat.Nat.neq_succ_diag_r; eassumption);
-              try contra_S_lt_self. }
-
-
-
-        (* binop args *)
-        lazymatch goal with
-        | H: prog_impl (?l1 ++ _) _ (normal_fact (aux_rel ?r) _),
-            _: lower_expr' ?r _ = (?l1, _) |- _ =>
-            eapply prog_impl_comm, prog_impl_strengthen in H
-        | H: prog_impl (_ ++ ?l2) _ (normal_fact (aux_rel ?r) _),
-            _: lower_expr' ?r _ = (?l2, _) |- _ =>
-            eapply prog_impl_strengthen in H
-        end; intros; cbn.
-         2,3:  eapply lower_expr'_normal_rules; eauto.
-         2:{ repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
-                     apply_lower_expr'_hyps_namespace; eauto).
-                repeat (destruct_match_hyp; intuition idtac).
-                1: do_injection; try contra_S_le_self;
-                repeat apply_lower_expr'_in_lt_out;
-                try contra_S_lt_le_self;
-                try contra_lt_le_self.
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac; try contra_S_le_self;
-                repeat apply_lower_expr'_in_lt_out;
-                try contra_S_lt_le_self;
-                      try contra_lt_le_self. } }
-         2:{ repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
-                     apply_lower_expr'_hyps_namespace; eauto).
-                repeat apply_lower_expr'_in_lt_out.
-                repeat (destruct_match_hyp; intuition idtac).
-                do_injection; try contra_S_le_self;
-                  repeat apply_lower_expr'_in_lt_out;
-                  try contra_S_lt_le_self;
-                  try contra_lt_le_self;
-                  try (eapply PeanoNat.Nat.lt_irrefl; eauto). }
-
-        (* binop args *)
-        lazymatch goal with
-        | H: prog_impl (?l1 ++ _) _ (normal_fact (aux_rel ?r) _),
-            _: lower_expr' ?r _ = (?l1, _) |- _ =>
-            eapply prog_impl_comm, prog_impl_strengthen in H
-        | H: prog_impl (_ ++ ?l2) _ (normal_fact (aux_rel ?r) _),
-            _: lower_expr' ?r _ = (?l2, _) |- _ =>
-            eapply prog_impl_strengthen in H
-        end; intros; cbn.
-         2,3:  eapply lower_expr'_normal_rules; eauto.
-         2:{ repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
-                     apply_lower_expr'_hyps_namespace; eauto).
-                repeat (destruct_match_hyp; intuition idtac).
-                1: do_injection; try contra_S_le_self;
-                repeat apply_lower_expr'_in_lt_out;
-                try contra_S_lt_le_self;
-                try contra_lt_le_self.
-                1:{ rewrite Forall_forall; intros; apply_Forall_In.
-                    lazymatch goal with
-                      H: _ = ?x, _: context[?x] |- _ =>
-                        rewrite <- H in *
-                    end.
-                    intuition idtac; try contra_S_le_self;
-                repeat apply_lower_expr'_in_lt_out;
-                try contra_S_lt_le_self;
-                      try contra_lt_le_self. } }
-         2:{ repeat (apply_lower_expr'_concl_namespace_fresh; eauto;
-                     apply_lower_expr'_hyps_namespace; eauto).
-             repeat apply_lower_expr'_in_lt_out.
-             repeat (destruct_match_hyp; intuition idtac).
-             do_injection; try contra_S_le_self;
-               repeat apply_lower_expr'_in_lt_out;
-               try contra_S_lt_le_self;
-               try contra_lt_le_self;
-               try (eapply PeanoNat.Nat.lt_irrefl; eauto). }
-
-
-         repeat apply_lower_expr_sound_IH;
-      repeat (invert_cons; clear_refl);
-      repeat apply_expr_type_sound;
-      repeat invert_type_of_value;
-      repeat invert_interp_dexpr;
-      repeat rewrite_expr_value;
-      repeat rewrite_l_to_r; cbn in *;
-           repeat (try clear_refl; try do_injection);
-           try rewrite dvalue_eqb_iff_value_eqb;
-           congruence. }
-    Qed.
+        repeat apply_lower_expr_sound_IH;
+          repeat (invert_cons; clear_refl);
+          repeat apply_expr_type_sound;
+          repeat invert_type_of_value;
+          repeat invert_interp_dexpr;
+          repeat rewrite_expr_value;
+          repeat rewrite_l_to_r; cbn in *;
+          repeat (try clear_refl; try do_injection);
+          try rewrite dvalue_eqb_iff_value_eqb;
+      congruence.
+  Qed.
 
   Theorem lower_cfg_sound : forall (g : cfg) ts,
       well_typed_cfg g ->
