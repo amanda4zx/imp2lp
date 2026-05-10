@@ -38,7 +38,7 @@ Definition mk_dblock asgns fl :=
 Definition mk_dprog init blks :=
   {| dprog_init := init; dprog_blks := blks |}.
 
-Coercion glob_rel : global_rel >-> rel.
+Local Coercion glob_rel : global_rel >-> rel.
 
 Fixpoint lower_expr' (out : nat) (e : SrcLang.expr) : (list rule * nat) :=
   match e with

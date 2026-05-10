@@ -37,6 +37,12 @@ Ltac invert_pair :=
 Ltac invert_cons :=
   lazymatch goal with H: _ :: _ = _ :: _ |- _ => inversion H; subst end.
 
+Ltac invert_Exists :=
+  lazymatch goal with
+    H: Exists _ _ |- _ =>
+      inversion H; subst; clear H
+  end.
+
 Ltac destruct_exists :=
   lazymatch goal with
     H: exists _, _ |- _ => destruct H end.
