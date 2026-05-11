@@ -26,6 +26,31 @@ Ltac rewrite_expr_value :=
       rewrite <- H in *; clear H
   end.
 
+Fixpoint apply_with_idx' {A B} (f : nat -> A -> list B) (x : nat) (l : list A) : list B :=
+  match l with
+  | [] => []
+  | a :: l => f x a ++ apply_with_idx' f (S x) l
+  end.
+
+Definition apply_with_idx {A B} (f : nat -> A -> list B) := apply_with_idx' f 0.
+
+Lemma apply_with_idx_preserve_P' : forall A B (f : nat -> A -> list B) P l n,
+    (forall b x, In x l -> Forall P (f b x)) ->
+    Forall P (apply_with_idx' f n l).
+Proof.
+  induction l; cbn; auto.
+  intros. rewrite Forall_app.
+  intuition eauto.
+Qed.
+
+Lemma apply_with_idx_preserve_P : forall A B (f : nat -> A -> list B) P l,
+    (forall b x, In x l -> Forall P (f b x)) ->
+    Forall P (apply_with_idx f l).
+Proof.
+  unfold apply_with_idx.
+  intros; apply apply_with_idx_preserve_P'; auto.
+Qed.
+
 Definition mk_clause R args : clause :=
   {| clause_rel := R; clause_args := args |}.
 
@@ -126,16 +151,19 @@ Definition lower_value_reified (v : value) : dexpr :=
   | VBool b => fun_expr (blit_fn b) []
   end.
 
-Fixpoint lower_init_str' (x : nat) (str : list value) : list rule :=
-  match str with
-  | [] => []
-  | v :: str => mk_rule
-                  (mk_clause (mut_rel x) [ lower_value_reified v ])
-                  [] ::
-                  lower_init_str' (S x) str
-  end.
+Definition lower_init_str' : nat -> list value -> list rule :=
+  apply_with_idx'
+    (fun x v => [ mk_rule
+                    (mk_clause (mut_rel x)
+                       [ lower_value_reified v ])
+                    [] ]).
 
-Definition lower_init_str : list value -> list rule := lower_init_str' 0.
+Definition lower_init_str : list value -> list rule :=
+  apply_with_idx
+    (fun x v => [ mk_rule
+                    (mk_clause (mut_rel x)
+                       [ lower_value_reified v ])
+                    [] ]).
 
 Definition lower_init_ptr (n : option nat) : rule :=
   match n with
@@ -254,21 +282,34 @@ Section WithMap.
       econstructor; eauto.
   Qed.
 
-  Lemma lower_init_str'_not_meta : forall str x,
-      flat_map meta_concl_rels (lower_init_str' x str) = [].
+  Lemma flat_map_nil : forall A B (f : A -> list B) l,
+      Forall (fun x => f x = []) l ->
+      flat_map f l = [].
   Proof.
+    induction 1; cbn; try rewrite_asm; auto.
+  Qed.
+
+  Lemma lower_init_str'_not_meta : forall n str,
+      flat_map meta_concl_rels (lower_init_str' n str) = [].
+  Proof.
+    intros. revert n.
     induction str; cbn; auto.
   Qed.
 
   Lemma lower_init_str_not_meta : forall str,
       flat_map meta_concl_rels (lower_init_str str) = [].
   Proof.
-    intros; apply lower_init_str'_not_meta.
+    intros.
+    apply flat_map_nil.
+    apply apply_with_idx_preserve_P; intros.
+    repeat constructor.
   Qed.
 
   Lemma lower_init_str'_complete : forall str x v db n,
       nth_error str x = Some v ->
-      prog_impl (lower_init_str' n str) db (normal_fact (glob_rel (mut_rel (n + x))) [lower_value v]).
+      prog_impl (lower_init_str' n str) db
+        (normal_fact (glob_rel (mut_rel (n + x)))
+           [lower_value v]).
   Proof.
     induction str; cbn; intros.
     1: destruct x; discriminate.

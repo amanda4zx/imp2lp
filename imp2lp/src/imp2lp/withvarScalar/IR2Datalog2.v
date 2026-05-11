@@ -111,14 +111,6 @@ Definition lower_flow (b : nat) (fl : dflow) : list rule' :=
                  [ mk_blk_active_clause b (var_expr time_var) ] ]
   end.
 
-Fixpoint apply_with_idx' {A B} (f : nat -> A -> list B) (x : nat) (l : list A) : list B :=
-  match l with
-  | [] => []
-  | a :: l => f x a ++ apply_with_idx' f (S x) l
-  end.
-
-Definition apply_with_idx {A B} (f : nat -> A -> list B) := apply_with_idx' f 0.
-
 Definition lower_asgns (b : nat) (l : list module) : list rule' :=
   apply_with_idx (fun x rls => mk_mut_update_rule b x :: List.map (lower_rule b (Some x)) rls) l.
 
@@ -195,23 +187,6 @@ Definition db_implements_Datalog_fact (ts : nat) (db : Intermediate.fact -> Prop
   | _, _ => False
   end.
    *)
-
-  Lemma apply_with_idx_preserve_P' : forall A B (f : nat -> A -> list B) P l n,
-      (forall b x, In x l -> Forall P (f b x)) ->
-      Forall P (apply_with_idx' f n l).
-  Proof.
-    induction l; cbn; auto.
-    intros. rewrite Forall_app.
-    intuition eauto.
-  Qed.
-
-  Lemma apply_with_idx_preserve_P : forall A B (f : nat -> A -> list B) P l,
-      (forall b x, In x l -> Forall P (f b x)) ->
-      Forall P (apply_with_idx f l).
-  Proof.
-    unfold apply_with_idx.
-    intros; apply apply_with_idx_preserve_P'; auto.
-  Qed.
 
   Ltac invert_Exists :=
     lazymatch goal with
@@ -1321,7 +1296,43 @@ Definition db_implements_Datalog_fact (ts : nat) (db : Intermediate.fact -> Prop
       dprog_wf (lower_cfg g).
   Proof.
     unfold dprog_wf, init_module_wf, dblock_wf.
-  Admitted.
+    cbn; intros; intuition idtac.
+    1:{ constructor.
+        1:{ unfold lower_init_ptr.
+            case_match; cbn; trivial. }
+        1:{ unfold lower_init_str.
+            apply apply_with_idx_preserve_P.
+            intros; repeat constructor. } }
+    1:{ rewrite Forall_map, Forall_forall; intros.
+        intuition idtac.
+        1:{ lazymatch goal with
+            x : block |- _ =>
+              destruct x
+          end; cbn.
+            rewrite Forall_map, Forall_forall; intros.
+            rewrite Forall_forall; intros.
+            lazymatch goal with
+              H: In _ (lower_expr _) |- _ =>
+                eapply lower_expr'_concl_namespace in H
+            end; eauto using surjective_pairing.
+            repeat destruct_match_hyp; intuition idtac.
+            cbn. rewrite_asm. auto. }
+        1:{ lazymatch goal with
+            x : block |- _ =>
+              destruct x
+          end; cbn.
+            lazymatch goal with
+              fl : flow |- _ =>
+                destruct fl
+            end; cbn; trivial.
+            rewrite Forall_forall; intros.
+            lazymatch goal with
+              H: In _ (lower_expr _) |- _ =>
+                eapply lower_expr'_concl_namespace in H
+            end; eauto using surjective_pairing.
+            repeat destruct_match_hyp; intuition idtac.
+            cbn. rewrite_asm. auto. } }
+  Qed.
 
   Definition fact'_is_lowered_from_str (r : global_rel) (vs : list dvalue) (str : list value) : Prop :=
     match r with
@@ -1394,3 +1405,5 @@ Definition db_implements_Datalog_fact (ts : nat) (db : Intermediate.fact -> Prop
     1:{ right; intuition auto. }
   Qed.
 End WithMap.
+
+Print Assumptions lower_lower_cfg_sound.
