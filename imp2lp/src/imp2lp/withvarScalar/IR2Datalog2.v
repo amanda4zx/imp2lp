@@ -152,6 +152,16 @@ Definition concl_is_not_global (rl : rule) :=
   | _ => False
   end.
 
+Definition concl_is_scalar (rl : rule) :=
+  match rl with
+  | normal_rule [ concl ] _ =>
+      match concl.(clause_args) with
+      | [_] => True
+      | _ => False
+      end
+  | _ => False
+  end.
+
 Definition init_module_wf (rls : module) :=
   Forall (fun rl =>
             match rl with
@@ -162,6 +172,7 @@ Definition init_module_wf (rls : module) :=
 
 Definition dblock_wf (blk : dblock) :=
   Forall (Forall concl_is_not_global) blk.(dblock_asgns) /\
+  Forall (Forall concl_is_scalar) blk.(dblock_asgns) /\
     match blk.(dblock_fl) with
     | DFIf p _ _ => Forall concl_is_not_global p
     | _ => True
@@ -597,6 +608,8 @@ Definition db_implements_Datalog_fact (ts : nat) (db : Intermediate.fact -> Prop
     apply apply_with_idx_preserve_P; intros.
     apply lower_dblock_normal.
   Qed.
+
+  (* ====== Soundness ====== *)
 
   Lemma lower_asgn_sound' : forall pr f d rls,
       init_module_wf pr.(dprog_init) ->
@@ -1317,6 +1330,16 @@ Definition db_implements_Datalog_fact (ts : nat) (db : Intermediate.fact -> Prop
             end; eauto using surjective_pairing.
             repeat destruct_match_hyp; intuition idtac.
             cbn. rewrite_asm. auto. }
+        1:{  lazymatch goal with
+            x : block |- _ =>
+              destruct x
+          end; cbn.
+            rewrite Forall_map, Forall_forall; intros.
+            rewrite Forall_forall; intros.
+            lazymatch goal with
+              H: In _ (lower_expr _) |- _ =>
+                eapply lower_expr'_concl_singleton in H
+            end; eauto using surjective_pairing. }
         1:{ lazymatch goal with
             x : block |- _ =>
               destruct x
@@ -1404,6 +1427,634 @@ Definition db_implements_Datalog_fact (ts : nat) (db : Intermediate.fact -> Prop
     1:{ right; intuition auto. }
     1:{ right; intuition auto. }
   Qed.
+
+
+  (* ====== Completeness ====== *)
+
+  Definition lower_context : context -> context' :=
+    map.fold (fun ctx x v => map.put ctx (dvar x) v) map.empty.
+
+  Lemma lower_context_interp_expr : forall (ctx : context) (e : dexpr) (v : dvalue),
+      Datalog.interp_expr ctx e v ->
+      Datalog.interp_expr (lower_context ctx) (lower_dexpr e) v.
+  Proof.
+    intros; generalize dependent v.
+    1:{ induction e; intros.
+        1:{ invert_interp_expr.
+            econstructor.
+            revert H1. unfold lower_context.
+            apply map.fold_spec.
+            1: rewrite map.get_empty in *; discriminate.
+            1:{ intros.
+                destruct (Nat.eqb k v) eqn:E;
+                  rewrite ?Nat.eqb_eq, ?Nat.eqb_neq in *;
+                  subst.
+                all: rewrite_map_get_put_hyp; try do_injection;
+                  try rewrite_map_get_put_goal; congruence. } }
+        1:{ invert_interp_expr.
+            econstructor; eauto.
+            lazymatch goal with
+              H: interp_fun _ _ = _ |- _ =>
+                clear H
+            end.
+            rewrite <- List.Forall2_map_l in *.
+            generalize dependent args'.
+            induction args; intros; invert_Forall;
+              cbn in *; invert_Forall2; auto. } }
+  Qed.
+
+  Lemma lower_context_interp_exprs : forall (ctx : context) (clause_args : list dexpr) (nf_args : list dvalue),
+     Forall2 (Datalog.interp_expr ctx) clause_args nf_args  ->
+     Forall2 (Datalog.interp_expr (lower_context ctx)) (map lower_dexpr clause_args) nf_args.
+  Proof.
+    induction clause_args; cbn; intros; invert_Forall2.
+    1: constructor.
+    1:{ lazymatch goal with
+        IH: context[Forall2 _ _ _ -> _],
+          H: Forall2 _ _ _ |- _ =>
+          apply IHclause_args in H
+      end.
+        constructor; eauto using lower_context_interp_expr. }
+  Qed.
+
+  Lemma put_timestamp_lower_context_interp_expr : forall (ctx : context) (e : dexpr) (v t : dvalue),
+      Datalog.interp_expr ctx e v ->
+      Datalog.interp_expr (map.put (lower_context ctx) time_var t) (lower_dexpr e) v.
+  Proof.
+    intros; generalize dependent v.
+    1:{ induction e; intros.
+        1:{ invert_interp_expr.
+            econstructor.
+            revert H1. unfold lower_context.
+            apply map.fold_spec.
+            1: rewrite map.get_empty in *; discriminate.
+            1:{ intros.
+                destruct (Nat.eqb k v) eqn:E;
+                  rewrite ?Nat.eqb_eq, ?Nat.eqb_neq in *;
+                  subst.
+                all: rewrite_map_get_put_hyp; try do_injection.
+                1: repeat rewrite_map_get_put_goal; reflexivity.
+                1: repeat rewrite_map_get_put_goal; try congruence.
+                lazymatch goal with
+                  H: ?h -> _, H': ?h |- _ =>
+                    apply H in H'
+                end.
+                rewrite_map_get_put_hyp. } }
+        1:{ invert_interp_expr.
+            econstructor; eauto.
+            lazymatch goal with
+              H: interp_fun _ _ = _ |- _ =>
+                clear H
+            end.
+            rewrite <- List.Forall2_map_l in *.
+            generalize dependent args'.
+            induction args; intros; invert_Forall;
+              cbn in *; invert_Forall2; auto. } }
+  Qed.
+
+  Lemma put_timestamp_lower_context_interp_exprs : forall (ctx : context) t (clause_args : list dexpr) (nf_args : list dvalue),
+     Forall2 (Datalog.interp_expr ctx) clause_args nf_args  ->
+     Forall2 (Datalog.interp_expr (map.put (lower_context ctx) time_var t)) (map lower_dexpr clause_args) nf_args.
+  Proof.
+    induction clause_args; cbn; intros; invert_Forall2.
+    1: constructor.
+    1:{ lazymatch goal with
+        IH: context[Forall2 _ _ _ -> _],
+          H: Forall2 _ _ _ |- _ =>
+          apply IHclause_args in H
+      end.
+        constructor; eauto using put_timestamp_lower_context_interp_expr. }
+  Qed.
+
+  Definition lower_fact b x t (f : Intermediate2.fact) : fact' :=
+    match f with
+    | normal_fact r args => normal_fact (lower_rel b x r) (t :: args)
+    | meta_fact _ _ _ => normal_fact (aux_rel' 0 None 0) []
+    end.
+
+  Lemma put_timestamp_lower_context_interp_clause : forall (ctx : context) t b x hyps l,
+       Forall2 (Datalog.interp_clause ctx) hyps l ->
+       Forall2 (interp_clause (map.put (lower_context ctx) time_var t)) (map (lower_clause b x) hyps) (map (lower_fact b x t) l).
+  Proof.
+    induction hyps; cbn; intros; invert_Forall2; cbn; constructor; auto.
+    invert_interp_clause; intuition idtac; subst.
+    cbn.
+    unfold lower_clause in *; cbn in *.
+    econstructor; intuition eauto. cbn.
+    repeat constructor.
+    1: rewrite_map_get_put_goal; reflexivity.
+    1: apply put_timestamp_lower_context_interp_exprs; assumption.
+  Qed.
+
+  Lemma incl_apply_with_idx' : forall {A B} (f : nat -> A -> list B) l n x a,
+      nth_error l x = Some a ->
+      incl (f (n + x) a) (apply_with_idx' f n l).
+  Proof.
+    induction l; intros.
+    1:{ rewrite nth_error_nil in *; discriminate. }
+    1:{ destruct x; cbn in *.
+        1: do_injection; clear_refl;
+        rewrite Nat.add_0_r; apply incl_appl, incl_refl.
+        1:{ apply incl_appr.
+            rewrite <- Nat.add_succ_comm.
+            apply IHl; assumption. } }
+  Qed.
+
+  Lemma incl_apply_with_idx : forall {A B} (f : nat -> A -> list B) l x a,
+    nth_error l x = Some a ->
+    incl (f x a) (apply_with_idx f l).
+  Proof.
+    intros. eapply incl_apply_with_idx' in H.
+    erewrite plus_O_n in *.
+    eassumption.
+  Qed.
+
+  Lemma incl_lower_dblock_lower_dprog : forall pr x blk,
+      nth_error pr.(dprog_blks) x = Some blk ->
+      incl (lower_dblock x blk) (lower_dprog pr).
+    unfold lower_dprog; intros.
+    apply incl_appr.
+    unfold lower_dblocks.
+    apply incl_apply_with_idx. assumption.
+  Qed.
+
+  Lemma dprog_impl_glob : forall pr ts f,
+      init_module_wf pr.(dprog_init) ->
+      dprog_impl pr ts f ->
+      match f with
+      | normal_fact (glob_rel _) _ => True
+      | _ => False
+      end.
+  Proof.
+    unfold init_module_wf, dprog_impl; destruct ts;
+      cbn; intros.
+    1:{ lazymatch goal with
+          H: prog_impl _ _ _ |- _ =>
+            inversion H; subst
+      end; intuition idtac.
+        rewrite Exists_exists in *;
+          destruct_exists; intuition idtac.
+        apply_Forall_In.
+        repeat destruct_match_hyp; intuition idtac.
+        invert_rule_impl_non_meta.
+        repeat invert_Exists.
+        invert_interp_clause; intuition idtac.
+        inject_normal_fact.
+        case_match; intuition fail. }
+    1:{ repeat destruct_exists.
+        intuition idtac.
+        1:{ unfold mk_flow_db in *.
+            destruct_match_hyp; intuition idtac; subst; auto. }
+        1:{ unfold mk_asgns_db in *.
+            repeat destruct_exists; intuition idtac; subst; auto. } }
+  Qed.
+
+  Lemma prog_impl_non_glob_rules_glob_fact : forall rls db f,
+      Forall concl_is_not_global rls ->
+      prog_impl rls db f ->
+      match f with
+      | normal_fact (glob_rel r) vs => db f
+      | _ => True
+      end.
+  Proof.
+    inversion 2; repeat case_match; auto; subst.
+    rewrite Exists_exists in *; destruct_exists; intuition idtac.
+    apply_Forall_In.
+    unfold concl_is_not_global, rel_is_global in *.
+    repeat destruct_match_hyp; intuition idtac.
+    invert_rule_impl_non_meta.
+    repeat invert_Exists.
+    invert_interp_clause; intuition idtac.
+    congruence.
+  Qed.
+
+  Lemma lower_cond_complete : forall pr ts x a blk cond k1 k2 vs,
+      dprog_wf pr ->
+      (forall (g : global_rel) (vs : list dvalue),
+          dprog_impl pr ts (normal_fact (glob_rel g) vs) ->
+          prog_impl (lower_dprog pr) (fun _ : fact' => False) (normal_fact (glob_rel' g) (DVNat ts :: vs))) ->
+      nth_error (dprog_blks pr) x = Some blk ->
+      blk.(dblock_fl) = DFIf cond k1 k2 ->
+      prog_impl cond (dprog_impl pr ts) (normal_fact (aux_rel a) vs) ->
+      prog_impl (lower_dprog pr) (fun _ => False) (normal_fact (aux_rel' x None a) (DVNat ts :: vs)).
+  Proof.
+    unfold dprog_wf; intros.
+    remember (normal_fact (aux_rel a) vs) as f.
+    generalize dependent vs. revert a.
+    lazymatch goal with
+      H: prog_impl _ _ _ |- _ =>
+        induction H
+    end; intros; subst.
+    1:{ lazymatch goal with
+        H: dprog_impl _ _ _ |- _ =>
+          apply dprog_impl_glob in H
+      end; intuition fail. }
+    1:{ lazymatch goal with
+        H: nth_error _ _ = _ |- _ =>
+          apply incl_lower_dblock_lower_dprog in H as H';
+          unfold lower_dblock in H;
+          apply List.incl_app_bw_r in H';
+          unfold lower_flow in H';
+          rewrite_l_to_r;
+          apply List.incl_app_bw_l in H'
+      end.
+        rewrite Exists_exists in *; destruct_exists; intuition idtac.
+        lazymatch goal with
+          H: incl (map _ ?cond) _,
+            H': In _ ?cond |- _ =>
+            eapply in_map in H' as H_lo;
+            apply H in H_lo
+        end.
+        lazymatch goal with
+          H: nth_error _ _ = _ |- _ =>
+            apply nth_error_In in H as H_in
+        end.
+        apply_Forall_In.
+        unfold dblock_wf in *; intuition idtac.
+        rewrite_l_to_r.
+        lazymatch goal with
+          H: Forall concl_is_not_global _ |- _ =>
+            eapply List.Forall_In in H as H_no_glob
+        end; eauto.
+        unfold concl_is_not_global in *.
+        repeat destruct_match_hyp; intuition idtac.
+        invert_rule_impl_non_meta.
+        repeat invert_Exists.
+        destruct c.
+        invert_interp_clause; intuition idtac.
+        inject_normal_fact; cbn in *.
+        eapply pftree_step.
+        1:{ rewrite Exists_exists; eexists; intuition eauto.
+            repeat econstructor; cbn.
+            1:{ instantiate (1:=map.put (lower_context ctx) time_var _);
+                rewrite_map_get_put_goal; reflexivity. }
+            1:{ apply put_timestamp_lower_context_interp_exprs; assumption. }
+            1: apply put_timestamp_lower_context_interp_clause; eauto. }
+        1:{ rewrite Forall_map, Forall_forall; intros.
+            lazymatch goal with
+              H: Forall2  _ _ ?l,
+              _: In _ ?l |- _ =>
+                eapply List.Forall2_forget_l in H
+            end; apply_Forall_In.
+            destruct_exists; intuition idtac.
+            invert_interp_clause; intuition idtac; subst.
+            lazymatch goal with
+              x2 : clause |- _ =>
+                destruct x2
+            end. cbn in *.
+            destruct clause_rel.
+            1:{ (* hypothesis has a global relation *)
+              lazymatch goal with
+                H: Forall (pftree _ _) _ |- _ =>
+                  eapply List.Forall_In in H; eauto;
+                  eapply prog_impl_non_glob_rules_glob_fact in H; eauto
+              end.
+              lazymatch goal with
+                H: context[dprog_impl _ _ _ -> prog_impl _ _ _] |- _ =>
+                  apply H
+              end.
+              assumption. }
+            1:{ (* hypothesis has a auxiliary relation *)
+              apply_Forall_In; cbn.
+              lazymatch goal with
+                H: context[_ = _ -> prog_impl _ _ _] |- _ =>
+                  apply H
+              end.
+              reflexivity. } } }
+  Qed.
+
+  Lemma lower_asgn_complete : forall pr ts b x a blk rls vs,
+      dprog_wf pr ->
+      (forall (g : global_rel) (vs : list dvalue),
+          dprog_impl pr ts (normal_fact (glob_rel g) vs) ->
+          prog_impl (lower_dprog pr) (fun _ : fact' => False) (normal_fact (glob_rel' g) (DVNat ts :: vs))) ->
+      nth_error pr.(dprog_blks) b = Some blk ->
+      nth_error blk.(dblock_asgns) x = Some rls ->
+      prog_impl rls (dprog_impl pr ts) (normal_fact (aux_rel a) vs) ->
+      prog_impl (lower_dprog pr) (fun _ => False) (normal_fact (aux_rel' b (Some x) a) (DVNat ts :: vs)).
+  Proof.
+    unfold dprog_wf; intros.
+    remember (normal_fact (aux_rel a) vs) as f.
+    generalize dependent vs. revert a.
+    lazymatch goal with
+      H: prog_impl _ _ _ |- _ =>
+        induction H
+    end; intros; subst.
+    1:{ lazymatch goal with
+        H: dprog_impl _ _ _ |- _ =>
+          apply dprog_impl_glob in H
+      end; intuition fail. }
+    1:{ lazymatch goal with
+        H: nth_error (dprog_blks _) _ = _ |- _ =>
+          apply incl_lower_dblock_lower_dprog in H as H';
+          unfold lower_dblock in H;
+          apply List.incl_app_bw_l in H';
+          eapply incl_tran in H'
+      end.
+        2:eapply incl_apply_with_idx; eauto.
+        apply incl_cons_inv in H' as [_ H'].
+        rewrite Exists_exists in *; destruct_exists; intuition idtac.
+        lazymatch goal with
+          H: incl (map _ ?rls) _,
+            H': In _ ?rls |- _ =>
+            eapply in_map in H' as H_lo;
+            apply H in H_lo
+        end.
+        lazymatch goal with
+          H: nth_error (dprog_blks _) _ = _ |- _ =>
+            apply nth_error_In in H as H_blk_in
+        end.
+        apply_Forall_In.
+        unfold dblock_wf in *; intuition idtac.
+        clear H10.
+        lazymatch goal with
+          H: context[concl_is_scalar] |- _ =>
+            clear H
+        end.
+        lazymatch goal with
+          H: nth_error (dblock_asgns _) _ = _ |- _ =>
+            apply nth_error_In in H as H_asgn_in
+        end.
+        apply_Forall_In.
+        lazymatch goal with
+          H: In _ ?rls,
+            _: Forall _ ?rls |- _ =>
+            eapply List.Forall_In in H
+        end; eauto.
+        unfold concl_is_not_global in *.
+        repeat destruct_match_hyp; intuition idtac.
+        invert_rule_impl_non_meta.
+        repeat invert_Exists.
+        destruct c.
+        invert_interp_clause; intuition idtac.
+        inject_normal_fact; cbn in *.
+        eapply pftree_step.
+        1:{ rewrite Exists_exists; eexists; intuition eauto.
+            repeat econstructor; cbn.
+            1:{ instantiate (1:=map.put (lower_context ctx) time_var _);
+                rewrite_map_get_put_goal; reflexivity. }
+            1:{ apply put_timestamp_lower_context_interp_exprs; assumption. }
+            1: apply put_timestamp_lower_context_interp_clause; eauto. }
+        1:{ rewrite Forall_map, Forall_forall; intros.
+            lazymatch goal with
+              H: Forall2  _ _ ?l,
+              _: In _ ?l |- _ =>
+                eapply List.Forall2_forget_l in H
+            end; apply_Forall_In.
+            destruct_exists; intuition idtac.
+            invert_interp_clause; intuition idtac; subst.
+            lazymatch goal with
+              x2 : clause |- _ =>
+                destruct x2
+            end. cbn in *.
+            destruct clause_rel.
+            1:{ (* hypothesis has a global relation *)
+              lazymatch goal with
+                H: Forall (pftree _ _) _ |- _ =>
+                  eapply List.Forall_In in H; eauto;
+                  eapply prog_impl_non_glob_rules_glob_fact in H; eauto
+              end.
+              lazymatch goal with
+                H: context[dprog_impl _ _ _ -> prog_impl _ _ _] |- _ =>
+                  apply H
+              end.
+              assumption. }
+            1:{ (* hypothesis has a auxiliary relation *)
+              apply_Forall_In; cbn.
+              lazymatch goal with
+                H: context[_ = _ -> prog_impl _ _ _] |- _ =>
+                  apply H
+              end.
+              reflexivity. } } }
+  Qed.
+
+  Lemma scalar_rls_singleton_fact : forall pr rls ts a args,
+      init_module_wf (dprog_init pr) ->
+      Forall concl_is_scalar rls ->
+      prog_impl rls (dprog_impl pr ts) (normal_fact (aux_rel a) args) ->
+      match args with
+      | [_] => True
+      | _ => False
+      end.
+  Proof.
+    inversion 3; subst.
+    1:{ apply dprog_impl_glob in H2; intuition fail. }
+    1:{ rewrite Exists_exists in *.
+        destruct_exists; intuition idtac; apply_Forall_In.
+        unfold concl_is_scalar in *.
+        repeat destruct_match_hyp; intuition idtac; subst.
+        destruct c; cbn in *.
+        invert_rule_impl_non_meta.
+        repeat invert_Exists.
+        invert_interp_clause; intuition idtac.
+        inject_normal_fact; cbn in *.
+        repeat invert_Forall2. trivial. }
+  Qed.
+
+  Lemma lower_dprog_complete : forall pr rls,
+      dprog_wf pr ->
+      lower_dprog pr = rls ->
+      forall ts g vs,
+        dprog_impl pr ts (normal_fact (glob_rel g) vs) ->
+        prog_impl rls (fun _ => False) (normal_fact (glob_rel' g) (DVNat ts :: vs)).
+  Proof.
+    induction ts; intros; subst; cbn in *.
+    1:{ (* from init module *)
+      unfold dprog_impl in *.
+      lazymatch goal with
+        H: prog_impl _ _ _ |- _ =>
+          inversion H
+      end; intuition idtac.
+      unfold dprog_wf, init_module_wf in *.
+      eapply pftree_step; eauto.
+      rewrite Exists_exists in *.
+      destruct_exists; intuition idtac.
+      eexists; intuition idtac.
+      1:{ unfold lower_dprog.
+          rewrite in_app_iff; left.
+          rewrite in_map_iff; eexists; intuition eauto. }
+      apply_Forall_In.
+      repeat destruct_match_hyp; intuition idtac.
+      invert_rule_impl_non_meta.
+      repeat invert_Exists.
+      invert_interp_clause; intuition idtac.
+      lazymatch goal with
+        c : clause |- _ =>
+          destruct c
+      end.
+      inject_normal_fact; cbn in *.
+      repeat econstructor; cbn.
+      apply lower_context_interp_exprs; eassumption. }
+    1:{ repeat destruct_exists; intuition idtac;
+        lazymatch goal with
+          IH: context[dprog_impl _ _ _ -> prog_impl _ _ _],
+            H: dprog_impl _ _ (_ (_ (blk_rel _)) _) |- _ =>
+            apply IH in H
+        end;
+        unfold mk_flow_db, mk_asgns_db in *;
+        lazymatch goal with
+          H: nth_error _ _ = _ |- _ =>
+            apply incl_lower_dblock_lower_dprog in H as H'
+        end.
+        1:{ (* from control flow *)
+          destruct_match_hyp.
+          1:{ (* DFGoto *)
+            inject_normal_fact; auto.
+            eapply pftree_step.
+            1:{ eapply incl_Exists; eauto.
+                unfold lower_dblock.
+                rewrite Exists_app; right.
+                rewrite_asm; cbn.
+                repeat econstructor; cbn.
+                2: instantiate (1:=DVNat ts); trivial.
+                1: instantiate (1:=map.put map.empty time_var _).
+                all: rewrite_map_get_put_goal; reflexivity. }
+            constructor; try assumption; constructor. }
+
+          1:{ (* DFIf *)
+            intuition idtac;
+            inject_normal_fact; auto.
+            1:{ (* true branch *)
+              eapply pftree_step.
+              1:{ eapply incl_Exists; eauto.
+                  unfold lower_dblock.
+                  rewrite Exists_app; right.
+                  rewrite_asm; cbn.
+                  rewrite Exists_app; right. left.
+                  repeat econstructor; cbn.
+                  2: instantiate (1:=DVNat ts); trivial.
+                  1: instantiate (1:=map.put map.empty time_var _).
+                  all: rewrite_map_get_put_goal; reflexivity. }
+              constructor; try assumption.
+              constructor;
+                [ eapply lower_cond_complete; eauto
+                | constructor ]. }
+
+            1:{ (* false branch *)
+              eapply pftree_step.
+              1:{ eapply incl_Exists; eauto.
+                  unfold lower_dblock.
+                  rewrite Exists_app; right.
+                  rewrite_asm; cbn.
+                  rewrite Exists_app; right. right.
+                  repeat econstructor; cbn.
+                  2: instantiate (1:=DVNat ts); trivial.
+                  1: instantiate (1:=map.put map.empty time_var _).
+                  all: rewrite_map_get_put_goal; reflexivity. }
+              constructor; try assumption.
+              constructor;
+                [ eapply lower_cond_complete; eauto
+                | constructor ]. } }
+          (* ??? any way to merge the two branches? left vs right in the middle *)
+
+          1:{ (* DFRet *)
+            inject_normal_fact; auto.
+            eapply pftree_step.
+            1:{ eapply incl_Exists; eauto.
+                unfold lower_dblock.
+                rewrite Exists_app; right.
+                rewrite_asm; cbn.
+                repeat econstructor; cbn.
+                2: instantiate (1:=DVNat ts); trivial.
+                1: instantiate (1:=map.put map.empty time_var _).
+                all: rewrite_map_get_put_goal; reflexivity. }
+            constructor; try assumption; constructor. } }
+
+        1:{ (* from assignment *)
+          repeat destruct_exists; intuition idtac.
+          inject_normal_fact; auto.
+          unfold dprog_wf, dblock_wf in *; intuition idtac.
+          lazymatch goal with
+            H: nth_error (dprog_blks _) _ = _ |- _ =>
+              apply nth_error_In in H as H_blk_in;
+              eapply List.Forall_In in H_blk_in
+          end; eauto; cbn in *; intuition idtac.
+          lazymatch goal with
+            H: context[dblock_fl] |- _ =>
+              clear H
+          end.
+
+          (* Ensure the fact has a single argument.
+Necessary because the lowering to Datalog hard-codes a single variable for the relations in the rules, whereas mk_asgns_db (used in dprog_impl for the intermediate language) does not ensure a singleton list of arguments.
+           This may be enforced through a type system in the future. *)
+          lazymatch goal with
+            H: context[concl_is_scalar],
+              H': nth_error (dblock_asgns _) _ = _ |- _ =>
+              apply nth_error_In in H' as H_asgn_in;
+              apply_Forall_In
+          end.
+          lazymatch goal with
+            _: Forall concl_is_scalar ?rls,
+              H: prog_impl ?rls _ _ |- _ =>
+              apply scalar_rls_singleton_fact in H as H_scl
+          end; auto.
+          repeat destruct_match_hyp; intuition idtac; subst.
+
+          eapply pftree_step.
+          1:{ eapply incl_Exists; eauto.
+              unfold lower_dblock.
+              rewrite Exists_app; left.
+              eapply incl_Exists.
+              1: apply incl_apply_with_idx; eauto.
+              left.
+              unfold mk_mut_update_rule.
+              repeat econstructor; cbn.
+              2: instantiate (1:=DVNat ts); reflexivity.
+              1: instantiate (1:=map.put (map.put map.empty (dvar 0) _) time_var _).
+              all: repeat rewrite_map_get_put_goal; reflexivity. }
+          1:{ constructor.
+              2: constructor; try assumption; constructor.
+              eapply lower_asgn_complete; eauto.
+              unfold dprog_wf; intuition auto. } } }
+  Qed.
+
+  Definition str_is_lowered_to' (ts : nat) (str : list value) (db : fact' -> Prop) : Prop :=
+    forall x v, nth_error str x = Some v ->
+                db (normal_fact (glob_rel' (mut_rel x)) [DVNat ts; lower_value v]).
+
+  Definition ptr_is_lowered_to' (ts : nat) (ptr : option nat) (db : fact' -> Prop) : Prop :=
+    match ptr with
+    | Some n => db (normal_fact (glob_rel' (blk_rel n)) [DVNat ts])
+    | None => db (normal_fact (glob_rel' terminate_rel) [DVNat ts])
+    end.
+
+  Definition state_is_lowered_to' (ts : nat) (g_d : cfg_dynamic) (db : fact' -> Prop) : Prop :=
+    str_is_lowered_to' ts g_d.(str) db /\
+      ptr_is_lowered_to' ts g_d.(ptr) db.
+
+  Theorem lower_lower_cfg_complete : forall (g : cfg) (rls : list rule'),
+      lower_dprog (lower_cfg g) = rls ->
+      well_typed_cfg g ->
+      forall ts,
+        match cfg_steps g.(sig_blks) g.(str_ptr) ts with
+        | Some g_d =>
+            state_is_lowered_to' ts g_d
+              (prog_impl rls (fun _ => False))
+        | None => True
+        end.
+  Proof.
+    intros; case_match; intuition idtac.
+    lazymatch goal with
+      H: cfg_steps _ _ _ = _ |- _ =>
+        apply lower_cfg_complete in H
+    end; auto.
+    unfold state_is_lowered_to,
+      str_is_lowered_to,
+      ptr_is_lowered_to,
+      state_is_lowered_to',
+      str_is_lowered_to',
+      ptr_is_lowered_to' in *.
+    intuition idtac; intros.
+    1:{ lazymatch goal with
+        H: context[nth_error _ _ = _ -> _],
+          H': nth_error _ _ = _ |- _ =>
+          apply H in H'
+      end.
+        eauto using lower_dprog_complete, lower_cfg_dprog_wf. }
+    1:{ case_match;
+        eauto using lower_dprog_complete, lower_cfg_dprog_wf. }
+  Qed.
 End WithMap.
 
 Print Assumptions lower_lower_cfg_sound.
+Print Assumptions lower_lower_cfg_complete.

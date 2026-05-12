@@ -1030,6 +1030,48 @@ Section WithMap.
       intuition eauto using PeanoNat.Nat.le_trans, PeanoNat.Nat.le_succ_l, PeanoNat.Nat.lt_le_incl.
   Qed.
 
+  Lemma lower_expr'_concl_singleton : forall e n1 n2 rls,
+      lower_expr' n1 e = (rls, n2) ->
+      forall rl, In rl rls ->
+                 match rl with
+                 | normal_rule [concl] _ =>
+                     match clause_args concl with
+                     | [_] => True
+                     | _ => False
+                     end
+                 | _ => False
+                 end.
+  Proof.
+    induction e; cbn; intros.
+    all: try (invert_pair; intuition auto;
+              destruct_In; try apply_in_nil;
+              intuition idtac;
+              cbn; auto).
+    all: repeat destruct_match_hyp;
+      invert_pair;
+      destruct_In;
+      [ cbn;
+        repeat lazymatch goal with
+            E: lower_expr' _ _ = _ |- _ =>
+              apply lower_expr'_in_lt_out in E
+          end;
+        eauto using PeanoNat.Nat.lt_trans, PeanoNat.Nat.le_succ_l, PeanoNat.Nat.lt_le_incl | ];
+      try rewrite in_app_iff in *; intuition idtac;
+      lazymatch goal with
+        IH: context[lower_expr' _ ?e = _ -> _],
+          E: lower_expr' _ ?e = (?l, _),
+            H: In _ ?l |- _ =>
+          eapply IH in H; clear IH
+      end; [ | eauto ];
+      repeat (case_match; intuition idtac);
+      repeat lazymatch goal with
+          E: lower_expr' _ _ = _ |- _ =>
+            apply lower_expr'_in_lt_out in E
+        end;
+      intuition eauto using PeanoNat.Nat.le_trans, PeanoNat.Nat.le_succ_l, PeanoNat.Nat.lt_le_incl.
+  Qed.
+
+
   Lemma lower_expr'_hyps_namespace : forall e n1 n2 rls,
       lower_expr' n1 e = (rls, n2) ->
       forall rl, In rl rls ->
