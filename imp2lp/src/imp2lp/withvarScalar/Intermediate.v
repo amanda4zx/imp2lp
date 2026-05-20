@@ -14,8 +14,6 @@ Variant global_rel : Type :=
 Variant rel : Type :=
   | glob_rel : global_rel -> rel
   | aux_rel (a : nat).
-(* ???
-Coercion glob_rel : global_rel >-> rel. *)
 
 Variant fn :=
   | blit_fn (b : bool)

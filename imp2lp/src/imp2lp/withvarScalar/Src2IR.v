@@ -922,57 +922,6 @@ Section WithMap.
         repeat case_match; intuition idtac. }
   Qed.
 
-  (* ??? remove
-  Lemma prog_impl_strengthen : forall rls1 rls2 db f,
-      (forall rl1 rl2, In rl1 rls1 ->
-                       In rl2 rls2 ->
-                       rl1.(rule_concl).(clause_rel) <> rl2.(rule_concl).(clause_rel) /\
-                         Forall (fun c => rl1.(rule_concl).(clause_rel) <> c.(clause_rel)) rl2.(rule_hyps)) ->
-      (forall rl1, In rl1 rls1 -> rl1.(rule_concl).(clause_rel) <> f.(fact_rel)) ->
-      prog_impl db (rls1 ++ rls2) f ->
-      prog_impl db rls2 f.
-  Proof.
-    induction 3.
-    1: constructor; auto.
-    1:{ repeat destruct_exists; intuition idtac.
-        rewrite in_app_iff in *.
-        intuition idtac; invert_to_interp_clause.
-        1: apply H0 in H1; intuition fail.
-        eapply pftree_step.
-        1: repeat eexists; eauto.
-        rewrite Forall_forall; intros.
-        apply_Forall_In. apply H3.
-        intros * H_rl1 contra.
-        eapply H in H_rl1; eauto.
-        intuition idtac.
-        lazymatch goal with
-          H: Forall2 (interp_clause _) _ ?l,
-            _: In _ ?l |- _ =>
-            eapply clause_rel_interp_to_fact_rel in H
-        end; eauto.
-        apply_Forall_In. }
-  Qed.
-
-  Lemma prog_impl_cons_strengthen : forall rl1 rls2 db f,
-      (forall rl2,
-          In rl2 rls2 ->
-          rl1.(rule_concl).(clause_rel) <> rl2.(rule_concl).(clause_rel) /\
-            Forall (fun c => rl1.(rule_concl).(clause_rel) <> c.(clause_rel)) rl2.(rule_hyps)) ->
-      rl1.(rule_concl).(clause_rel) <> f.(fact_rel) ->
-      prog_impl db (rl1 :: rls2) f ->
-      prog_impl db rls2 f.
-  Proof.
-    intros *. change (rl1 :: rls2) with ([rl1] ++ rls2).
-    intros; eapply prog_impl_strengthen; eauto.
-    1:{ intros.
-        apply H in H3.
-        destruct_In; try apply_in_nil; intuition idtac. }
-    1:{ intros.
-        destruct_In; try apply_in_nil; intuition idtac. }
-  Qed.
-
-   *)
-
   Lemma lower_expr'_in_lt_out : forall e n1 n2 rls,
       lower_expr' n1 e = (rls, n2) ->
       n1 < n2.
@@ -1187,35 +1136,6 @@ Section WithMap.
       H: ?x = S ?x |- _ =>
         apply PeanoNat.Nat.neq_succ_diag_r in H
     end; intuition fail.
-(* ??? remove
-  Ltac strengthen_away_prog_impl_cons :=
-    let contra := fresh "contra" in
-    apply_prog_impl_cons_strengthen; intros; cbn;
-    [
-    | try rewrite in_app_iff in *;
-      split;
-      [ intuition idtac;
-        apply_lower_expr'_concl_namespace; eauto;
-        destruct_match_hyp; intuition idtac;
-        repeat (try clear_refl; try do_injection);
-        repeat apply_lower_expr'_in_lt_out;
-        try contra_S_le_self;
-        try contra_S_lt_le_self
-      | intuition idtac;
-        apply_lower_expr'_hyps_namespace; eauto;
-        rewrite Forall_forall; intros;
-        apply_Forall_In;
-        destruct_match_hyp; try congruence;
-        repeat (try clear_refl; try do_injection);
-        intuition idtac;
-        repeat apply_lower_expr'_in_lt_out;
-        try contra_S_le_self;
-        try contra_S_lt_le_self ]
-    | intro contra; injection contra as contra'; subst;
-      repeat apply_lower_expr'_in_lt_out;
-      try contra_eq_S_self;
-      try contra_S_lt_self ].
- *)
 
   Lemma lower_expr'_normal_rules: forall e rls r r',
       lower_expr' r e = (rls, r') ->

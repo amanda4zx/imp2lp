@@ -126,14 +126,6 @@ Section WithMap.
       | FRet => None
       end.
   End WithGstr.
-(* ??? remove
-  Variant cfg_step (g_s : cfg_static) (g_d : cfg_dynamic) : cfg_dynamic -> Prop :=
-    | CS_mk n asgns fl str' ptr' :
-      g_d.(ptr) = Some n ->
-      nth_error g_s.(blks) n = Some (Blk asgns fl) ->
-      str' = List.map (interp_expr g_d.(str)) asgns ->
-      ptr' = flow_step g_d.(str) fl ->
-      cfg_step g_s g_d {| str:=str'; ptr:=ptr' |}. *)
 
   Definition cfg_step (g_s : cfg_static) (g_d : cfg_dynamic) : option cfg_dynamic :=
     match g_d.(ptr) with
@@ -147,14 +139,6 @@ Section WithMap.
         end
     | None => None
     end.
-
-(* ??? remove
-  Inductive cfg_steps (g_s : cfg_static) : cfg_dynamic -> cfg_dynamic -> Prop :=
-  | CSS_refl g_d : cfg_steps g_s g_d g_d
-  | CSS_trans g_d0 g_d1 g_d2 :
-    cfg_steps g_s g_d0 g_d1 ->
-    cfg_step g_s g_d1 g_d2 ->
-    cfg_steps g_s g_d0 g_d2. *)
 
   Fixpoint cfg_steps (g_s : cfg_static) (g_d : cfg_dynamic) (t : nat) : option cfg_dynamic :=
     match t with
@@ -335,28 +319,6 @@ Section WithMap.
     case_match; auto.
   Qed.
 
-(* ??? remove
-  Theorem cfg_type_preservation : forall g_s g_d g_d',
-      well_typed_cfg {| sig_blks := g_s; str_ptr := g_d |} ->
-      cfg_steps g_s g_d g_d' ->
-      well_typed_cfg {| sig_blks := g_s; str_ptr := g_d' |}.
-  Proof.
-    unfold well_typed_cfg; intros.
-    induction H0; intuition idtac.
-    all: destruct g_s, g_d1, g_d2; cbn in *.
-    all: lazymatch goal with
-           H: context[cfg_step] |- _ =>
-             inversion H; subst
-         end.
-    all: lazymatch goal with
-           H: nth_error _ _ = _ |- _ =>
-             apply nth_error_In in H
-         end; apply_Forall_In.
-    all: cbn in *; subst; intuition idtac.
-    1:{ apply asgns_type_sound; assumption. }
-    1:{ eapply flow_type_sound; eassumption. }
-  Qed.
- *)
   Ltac apply_nth_error_In :=
     lazymatch goal with
       H: nth_error _ _ = Some _ |- _ =>
@@ -412,22 +374,6 @@ Section WithMap.
     apply IHl in H.
     destruct_exists. intuition eauto.
   Qed.
-
-  (* ??? remove
-  Theorem cfg_type_progress : forall g_s g_d,
-      well_typed_cfg {| sig_blks := g_s; str_ptr := g_d |} ->
-      match g_d.(ptr) with
-      | Some _ => True
-      | _ => False
-      end ->
-      exists g_d', cfg_step g_s g_d g_d'.
-  Proof.
-    destruct 1; subst; cbn in *; intuition idtac.
-    destruct_match_hyp; intuition idtac.
-    eapply lt_length__nth_error in H3; destruct_exists.
-    intuition idtac. destruct x.
-    eexists. econstructor; eauto.
-  Qed. *)
 
   Theorem cfg_step_progress : forall g_s g_d b,
       well_typed_cfg {| sig_blks := g_s; str_ptr := g_d |} ->
