@@ -1,5 +1,5 @@
-From imp2lp.withvarScalar Require Import Intermediate Datalog SrcLang Src2IR.
-From imp2lp Require Import MyTactics InversionTactics.
+From imp2lp.withvarScalar Require Import Intermediate Datalog SrcLang Src2IR InversionTactics.
+From imp2lp Require Import MyTactics.
 From coqutil Require Import Map.Interface Tactics.case_match.
 From Stdlib Require Import ZArith List.
 Import ListNotations.

@@ -58,6 +58,12 @@ Ltac rewrite_asm :=
     H: ?x = _ |- context[?x] => rewrite H
   end.
 
+Ltac rewrite_asm_hyp :=
+  lazymatch goal with
+    H: ?x = _, _: context[?x] |- _ =>
+      rewrite H in *
+  end.
+
 Ltac apply_Forall_In :=
   lazymatch goal with
     H: Forall _ ?l, _: In _ ?l |- _ =>
@@ -65,3 +71,12 @@ Ltac apply_Forall_In :=
 
 Ltac invert_NoDup :=
   lazymatch goal with H: NoDup (_ :: _) |- _ => inversion H; subst end.
+
+Ltac apply_in_nil :=
+  lazymatch goal with
+    H: In _ nil |- _ => apply in_nil in H
+  end.
+
+Ltac destruct_In :=
+  lazymatch goal with
+    H: In _ (_ :: _) |- _ => destruct H; subst end.

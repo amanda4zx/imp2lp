@@ -1460,4 +1460,83 @@ Section WithMap.
         rewrite nth_error_map.
         rewrite_asm; cbn. assumption. } }
   Qed.
+
+
+
+
+  (* ??? Experiment with alternative definitions *)
+  Definition lower_str (str : list value) (f : fact) : Prop :=
+    exists x v vs', nth_error str x = Some v /\
+                      In vs' [ [ lower_value v ] ] /\
+                      f = normal_fact (glob_rel (mut_rel x)) vs'.
+
+  Definition lower_ptr (ptr : option nat) (f : fact) : Prop :=
+    match ptr with
+    | Some n => f = normal_fact (glob_rel (blk_rel n)) []
+    | None => f = normal_fact (glob_rel terminate_rel) []
+    end.
+
+  Definition lower_state (g_d : cfg_dynamic) (f : fact) : Prop :=
+    lower_str g_d.(str) f \/
+      lower_ptr g_d.(ptr) f.
+
+
+  Definition state_is_lowered_to2 (g_d : cfg_dynamic) (db : fact -> Prop) : Prop :=
+    forall f,
+      lower_state g_d f ->
+      db f.
+
+  Definition db_is_lowered_from2 (db : fact -> Prop) (g_d : cfg_dynamic) : Prop :=
+    forall f,
+      db f ->
+      lower_state g_d f.
+
+  Goal forall g_d db, state_is_lowered_to g_d db <-> state_is_lowered_to2 g_d db.
+  Proof.
+    unfold state_is_lowered_to, state_is_lowered_to2,
+      str_is_lowered_to, ptr_is_lowered_to,
+      lower_state, lower_str, lower_ptr.
+    split; intros.
+    1:{ intuition idtac.
+        1:{ repeat destruct_exists; intuition idtac.
+            subst.
+            destruct_In; try apply_in_nil; intuition idtac.
+            auto. }
+        1:{ case_match; subst; auto. } }
+    1:{ intuition idtac.
+        1:{ apply H.
+            left.
+            repeat eexists; eauto.
+            constructor; reflexivity. }
+        1:{ case_match; auto. } }
+  Qed.
+
+  Goal forall db g_d, db_is_lowered_from db g_d <-> db_is_lowered_from2 db g_d.
+  Proof.
+    unfold db_is_lowered_from, db_is_lowered_from2,
+      fact_is_lowered_from,
+      fact_is_lowered_from_str, fact_is_lowered_from_ptr,
+      lower_state, lower_str, lower_ptr.
+    split; intros.
+    1:{ apply H in H0; intuition idtac.
+        1:{ repeat destruct_exists; intuition idtac.
+            destruct_match_hyp; intuition idtac.
+            subst.
+            left. repeat eexists; eauto.
+            constructor; reflexivity. }
+        1:{ destruct_exists; intuition idtac.
+            subst. right. rewrite_asm. reflexivity. }
+        1:{ right. rewrite_asm. assumption. } }
+    1:{ apply H in H0; intuition idtac.
+        1:{ repeat destruct_exists; intuition idtac.
+            subst.
+            destruct_In; try apply_in_nil; intuition idtac.
+            left. repeat eexists.
+            rewrite_asm. reflexivity. }
+        1:{ destruct_match_hyp; subst.
+            1:{ right. left.
+                eexists; eauto. }
+            1:{ right; right.
+                auto. } } }
+  Qed.
 End WithMap.
