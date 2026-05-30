@@ -16,8 +16,8 @@ Variant rel : Type :=
   | aux_rel (a : nat).
 
 Inductive dvar : Type :=
-| mut_var : nat * string -> dvar
-| access_var : string * string -> dvar
+| mut_var : nat -> dvar
+| access_var : string -> string -> dvar
 | attr_var : string -> dvar.
 
 Variant dvalue : Set :=

@@ -1,7 +1,7 @@
 From imp2lp.withvar Require Import SrcLang Datalog Intermediate.
 From imp2lp Require Import MyTactics Value.
-From Stdlib Require Import List.
-From coqutil Require Import Map.Interface Tactics.case_match.
+From Stdlib Require Import List String.
+From coqutil Require Import Map.Interface Tactics.case_match Result.
 
 Import ListNotations.
 
@@ -52,112 +52,269 @@ Local Coercion glob_rel : global_rel >-> rel.
 
 (* ====== lower expressions ===== *)
 
-Definition lower_aexpr (e : SrcLang.aexpr) : dexpr * list clause.
-Admitted.
-
-Definition lower_expr' (out : nat) (e : SrcLang.expr) : (list rule * nat).
-Admitted.
-(*
-Fixpoint lower_expr' (out : nat) (e : SrcLang.expr) : (list rule * nat) :=
+Fixpoint lower_aexpr (e : SrcLang.aexpr) : dexpr * list clause :=
   match e with
-  | ALoc x => ([ mk_rule
-                   (mk_clause (aux_rel out) [var_expr x])
-                   [ mk_clause (mut_rel x) [var_expr x] ] ],
-                S out)
-  | ABool b => ([ mk_rule
-                    (mk_clause (aux_rel out) [fun_expr (blit_fn b) []])
-                    [] ],
-                 S out)
-  | AInt n => ([ mk_rule
-                   (mk_clause (aux_rel out) [fun_expr (zlit_fn n) []])
-                   [] ],
-                S out)
-  | ANot e =>
-      let out1 := S out in
-      let '(rls, out2) := lower_expr' out1 e in
-      (mk_rule
-         (mk_clause (aux_rel out) [fun_expr not_fn [var_expr 0]])
-         [ mk_clause (aux_rel out1) [var_expr 0] ] ::
-         rls,
-        out2)
-  | AAnd e1 e2 =>
-      let out1 := S out in
-      let '(rls1, out2) := lower_expr' out1 e1 in
-      let '(rls2, out3) := lower_expr' out2 e2 in
-      (mk_rule
-         (mk_clause (aux_rel out) [fun_expr and_fn [var_expr 0; var_expr 1]])
-         [ mk_clause (aux_rel out1) [var_expr 0];
-           mk_clause (aux_rel out2) [var_expr 1] ] ::
-         rls1 ++ rls2,
-        out3)
-  | APlus e1 e2 =>
-      let out1 := S out in
-      let '(rls1, out2) := lower_expr' out1 e1 in
-      let '(rls2, out3) := lower_expr' out2 e2 in
-      (mk_rule
-         (mk_clause (aux_rel out) [fun_expr plus_fn [var_expr 0; var_expr 1]])
-         [ mk_clause (aux_rel out1) [var_expr 0];
-           mk_clause (aux_rel out2) [var_expr 1] ] ::
-         rls1 ++ rls2,
-        out3)
-  | ALt e1 e2 =>
-      let out1 := S out in
-      let '(rls1, out2) := lower_expr' out1 e1 in
-      let '(rls2, out3) := lower_expr' out2 e2 in
-      (mk_rule
-         (mk_clause (aux_rel out) [fun_expr lt_fn [var_expr 0; var_expr 1]])
-         [ mk_clause (aux_rel out1) [var_expr 0];
-           mk_clause (aux_rel out2) [var_expr 1] ] ::
-         rls1 ++ rls2,
-        out3)
-  | AEq e1 e2 =>
-      let out1 := S out in
-      let '(rls1, out2) := lower_expr' out1 e1 in
-      let '(rls2, out3) := lower_expr' out2 e2 in
-      (mk_rule
-         (mk_clause (aux_rel out) [fun_expr eq_fn [var_expr 0; var_expr 1]])
-         [ mk_clause (aux_rel out1) [var_expr 0];
-           mk_clause (aux_rel out2) [var_expr 1] ] ::
-         rls1 ++ rls2,
-        out3)
-  end.
-*)
-Definition lower_expr (e : SrcLang.expr) : module :=
-  fst (lower_expr' 0 e).
-
-(* ====== lower other constructs ====== *)
-
-Definition lower_flow (fl : flow) : dflow :=
-  match fl with
-  | FGoto n => DFGoto n
-  | FIf p n1 n2 => DFIf (lower_expr p) n1 n2
-  | FRet => DFRet
+  | ALoc x =>
+      (var_expr (mut_var x),
+        [ mk_clause
+            (glob_rel (mut_rel x))
+            [ var_expr (mut_var x) ] ])
+  | ABool b =>
+      (fun_expr (fnB (fn_BLit b)) [],
+        [])
+  | AInt z =>
+      (fun_expr (fnZ (fn_ZLit z)) [],
+        [])
+  | AString s =>
+      (fun_expr (fnS (fn_SLit s)) [],
+        [])
+  | ANot a =>
+      let '(a', hyps) := lower_aexpr a in
+      (fun_expr (fnB fn_Not) [a'],
+        hyps)
+  | AAnd a1 a2 =>
+      let '(a1', hyps1) := lower_aexpr a1 in
+      let '(a2', hyps2) := lower_aexpr a2 in
+      (fun_expr (fnB fn_And) [a1'; a2'],
+        hyps1 ++ hyps2)
+  | APlus a1 a2 =>
+      let '(a1', hyps1) := lower_aexpr a1 in
+      let '(a2', hyps2) := lower_aexpr a2 in
+      (fun_expr (fnZ fn_Plus) [a1'; a2'],
+        hyps1 ++ hyps2)
+  | AStringConcat a1 a2 =>
+      let '(a1', hyps1) := lower_aexpr a1 in
+      let '(a2', hyps2) := lower_aexpr a2 in
+      (fun_expr (fnS fn_StringConcat) [a1'; a2'],
+        hyps1 ++ hyps2)
+  | AStringLength a =>
+      let '(a', hyps) := lower_aexpr a in
+      (fun_expr (fnZ fn_StringLength) [a'],
+        hyps)
+  | AAccess x attr =>
+      (var_expr (access_var x attr),
+        [])
   end.
 
-Definition lower_block (blk : block) : dblock :=
-  match blk with
-    Blk asgns fl =>
-      mk_dblock (map lower_expr asgns) (lower_flow fl)
+Definition lower_rexpr (r : rexpr) : list dexpr * list clause :=
+  match r with
+    RRecord el =>
+      (List.map (fun '(_, a) => fst (lower_aexpr a)) (record_sort el),
+        List.concat (List.map (fun '(_, a) => snd (lower_aexpr a)) (record_sort el)))
   end.
 
-Definition lower_atomic_value_reified (v : value) : list dexpr :=
-  match v with
-  | VInt n => [ fun_expr (fnZ (fn_ZLit n)) [] ]
-  | VBool b => [ fun_expr (fnB (fn_BLit b)) [] ]
-  | VString s => [ fun_expr (fnS (fn_SLit s)) [] ]
-  | _ => []
+Definition lower_pexpr (p : pexpr) : dexpr * list clause :=
+  match p with
+  | PLt a1 a2 =>
+      let '(a1', hyps1) := lower_aexpr a1 in
+      let '(a2', hyps2) := lower_aexpr a2 in
+      (fun_expr (fnB fn_Lt) [a1'; a2'] , hyps1 ++ hyps2)
+  | PEq a1 a2 =>
+      let '(a1', hyps1) := lower_aexpr a1 in
+      let '(a2', hyps2) := lower_aexpr a2 in
+      (fun_expr (fnB fn_Eq) [a1'; a2'] , hyps1 ++ hyps2)
   end.
 
-Fixpoint lower_value_reified (v : value) : list (list dexpr) :=
-  match v with
-  | VInt _
-  | VBool _
-  | VString _ => [ lower_atomic_value_reified v ]
-  | VRecord l => [ flat_map lower_atomic_value_reified (map snd l) ]
-  | VList l | VSet l => flat_map lower_value_reified l
-  end.
+Section WithMap.
+  Context {context : map.map dvar dvalue} {context_ok : map.ok context}.
+  Context {tenv : map.map String.string type} {tenv_ok : map.ok tenv}.
+  Context {venv : map.map String.string value} {venv_ok : map.ok venv}.
 
-(* ??? remove
+  Section WithGSig.
+    Context (g_sig : list type).
+
+    Definition compute_type_of_aexpr (Genv : tenv) (a : SrcLang.aexpr) : type :=
+      match a with
+      | ALoc x =>
+          match nth_error g_sig x with
+          | Some t => t
+          | _ => TInt (* unreachable for well-typed expressions *)
+          end
+      | ABool _ | ANot _ | AAnd _ _ => TBool
+      | AInt _ | APlus _ _ | AStringLength _ => TInt
+      | AString _ | AStringConcat _ _ => TString
+      | AAccess x attr =>
+          match map.get Genv x with
+          | Some (TRecord l) =>
+              match access_record l attr with
+              | Success t => t
+              | _ => TInt
+              end
+          | _ => TInt
+          end
+      end.
+
+    Definition compute_type_of_rexpr (Genv : tenv) (r : SrcLang.rexpr) : type :=
+      match r with
+      | RRecord el =>
+          TRecord
+            (map
+               (fun '(attr, a) => (attr, compute_type_of_aexpr Genv a))
+               (record_sort el))
+      end.
+
+    Fixpoint compute_type_of_expr (e : SrcLang.expr) : type :=
+      match e with
+      | EAtom a =>
+          compute_type_of_aexpr map.empty a
+      | ELoc x =>
+          match nth_error g_sig x with
+          | Some t => t
+          | _ => TInt (* unreachable for well-typed expressions *)
+          end
+      | EEmptySet tl =>
+          TSet (TRecord tl)
+      | ESetInsert r e =>
+          compute_type_of_expr e
+      | EFilter e _ _ =>
+          compute_type_of_expr e
+      | EJoin e1 e2 x1 x2 _ r =>
+          match compute_type_of_expr e1 with
+          | TSet t1 =>
+              match compute_type_of_expr e2 with
+              | TSet t2 =>
+                  TSet
+                    (compute_type_of_rexpr
+                       (map.put (map.put map.empty x1 t1) x2 t2)
+                       r)
+              | _ => TInt
+              end
+          | _ => TInt
+          end
+      | EProj e x r =>
+          match compute_type_of_expr e with
+          | TSet t =>
+              TSet
+                (compute_type_of_rexpr
+                   (map.put map.empty x t) r)
+          | _ => TInt
+          end
+      end.
+
+  Fixpoint args_of_type (t : type) : list string :=
+    match t with
+    | TInt | TBool | TString => [""%string]
+    | TRecord l => map fst l
+    | TSet t => args_of_type t
+    end.
+
+  Fixpoint lower_expr' (out : nat) (e : SrcLang.expr) : (list rule * nat) :=
+    match e with
+    | EAtom a =>
+        let '(a', hyps) := lower_aexpr a in
+        ([ mk_rule
+             (mk_clause (aux_rel out) [a'])
+             hyps ],
+          S out)
+    | ELoc x =>
+        let attrs := args_of_type (compute_type_of_expr e) in
+        let args := map (fun attr => var_expr (attr_var attr)) attrs in
+        ([ mk_rule
+             (mk_clause (aux_rel out) args)
+             [ mk_clause (glob_rel (mut_rel x)) args ] ],
+          S out)
+    | EEmptySet tl =>
+        ([], S out)
+    | ESetInsert r e =>
+        let '(r', hyps) := lower_rexpr r in
+        let '(rls, out') := lower_expr' (S out) e in
+        let attrs := args_of_type (compute_type_of_expr e) in
+        let args := map (fun attr => var_expr (attr_var attr)) attrs in
+        ([ mk_rule
+             (mk_clause (aux_rel out) r')
+             hyps;
+           mk_rule
+             (mk_clause (aux_rel out) args)
+             [ mk_clause (aux_rel (S out)) args ] ] ++
+           rls,
+          out')
+    | EFilter e x ps =>
+        let true_out := S out in
+        let e_out := S (S out) in
+        let '(rls, out') := lower_expr' e_out e in
+        let ps' := map lower_pexpr ps in
+        let attrs := args_of_type (compute_type_of_expr e) in
+        let args := map (fun attr => var_expr (attr_var attr)) attrs in
+        ([ mk_rule
+             (mk_clause (aux_rel out) args)
+             ([ mk_clause (aux_rel e_out) args ] ++
+                flat_map (fun '(p', hyps) => [ mk_clause (aux_rel true_out) [p'] ] ++ hyps) ps');
+           mk_rule
+             (mk_clause (aux_rel true_out) [fun_expr (fnB (fn_BLit true)) []])
+             [] ] ++
+           rls,
+          out')
+    | EJoin e1 e2 x1 x2 ps r =>
+        let true_out := S out in
+        let e1_out := S (S out) in
+        let '(rls1, out1') := lower_expr' e1_out e1 in
+        let e2_out := S out1' in
+        let '(rls2, out2') := lower_expr' e2_out e2 in
+        let ps' := map lower_pexpr ps in
+        let '(r', hyps) := lower_rexpr r in
+        let attrs1 := args_of_type (compute_type_of_expr e1) in
+        let args1 := map (fun attr => var_expr (access_var x1 attr)) attrs1 in
+        let attrs2 := args_of_type (compute_type_of_expr e2) in
+        let args2 := map (fun attr => var_expr (access_var x2 attr)) attrs2 in
+        ([ mk_rule
+             (mk_clause (aux_rel out) r')
+             ([ mk_clause (aux_rel e1_out) args1;
+                mk_clause (aux_rel e2_out) args2 ] ++
+                flat_map (fun '(p', hyps) => [ mk_clause (aux_rel true_out) [p'] ] ++ hyps) ps');
+           mk_rule
+             (mk_clause (aux_rel true_out) [fun_expr (fnB (fn_BLit true)) []])
+             [] ] ++
+           rls1 ++
+           rls2,
+          out2')
+    | EProj e x r =>
+        let e_out := S out in
+        let '(rls, out') := lower_expr' e_out e in
+        let '(r', hyps) := lower_rexpr r in
+        let attrs := args_of_type (compute_type_of_expr e) in
+        let args := map (fun attr => var_expr (access_var x attr)) attrs in
+        ([ mk_rule
+             (mk_clause (aux_rel out) r')
+            ([ mk_clause (aux_rel e_out) args ] ++ hyps) ],
+        out')
+    end.
+
+  Definition lower_expr (e : SrcLang.expr) : module :=
+    fst (lower_expr' 0 e).
+
+  (* ====== lower other constructs ====== *)
+
+  Definition lower_flow (fl : flow) : dflow :=
+    match fl with
+    | FGoto n => DFGoto n
+    | FIf p n1 n2 => DFIf (lower_expr p) n1 n2
+    | FRet => DFRet
+    end.
+
+  Definition lower_block (blk : block) : dblock :=
+    match blk with
+      Blk asgns fl =>
+        mk_dblock (map lower_expr asgns) (lower_flow fl)
+    end.
+
+  Definition lower_atomic_value_reified (v : value) : list dexpr :=
+    match v with
+    | VInt n => [ fun_expr (fnZ (fn_ZLit n)) [] ]
+    | VBool b => [ fun_expr (fnB (fn_BLit b)) [] ]
+    | VString s => [ fun_expr (fnS (fn_SLit s)) [] ]
+    | _ => []
+    end.
+
+  Fixpoint lower_value_reified (v : value) : list (list dexpr) :=
+    match v with
+    | VInt _
+    | VBool _
+    | VString _ => [ lower_atomic_value_reified v ]
+    | VRecord l => [ flat_map lower_atomic_value_reified (map snd l) ]
+    | VList l | VSet l => flat_map lower_value_reified l
+    end.
+
+  (* ??? remove
 Definition lower_init_str' : nat -> list value -> list rule :=
   apply_with_idx'
     (fun x v =>
@@ -165,85 +322,81 @@ Definition lower_init_str' : nat -> list value -> list rule :=
                          (mk_clause (mut_rel x) vs')
                          [])
          (lower_value_reified v)).
-*)
+   *)
 
-Definition lower_init_str : list value -> list rule :=
-  apply_with_idx
-    (fun x v =>
-       map (fun vs' => mk_rule
-                         (mk_clause (mut_rel x) vs')
-                         [])
-         (lower_value_reified v)).
+  Definition lower_init_str : list value -> list rule :=
+    apply_with_idx
+      (fun x v =>
+         map (fun vs' => mk_rule
+                           (mk_clause (mut_rel x) vs')
+                           [])
+           (lower_value_reified v)).
 
-Definition lower_init_ptr (n : option nat) : rule :=
-  match n with
-  | Some n =>
-      mk_rule
-        (mk_clause (blk_rel n) [])
-        []
-  | None =>
-      mk_rule
-        (mk_clause terminate_rel [])
-        []
-  end.
+  Definition lower_init_ptr (n : option nat) : rule :=
+    match n with
+    | Some n =>
+        mk_rule
+          (mk_clause (blk_rel n) [])
+          []
+    | None =>
+        mk_rule
+          (mk_clause terminate_rel [])
+          []
+    end.
 
-Definition lower_cfg (g : cfg) : dprog :=
-  mk_dprog
-    (lower_init_ptr g.(str_ptr).(ptr) ::
-                                  lower_init_str g.(str_ptr).(str))
-    (List.map lower_block g.(sig_blks).(blks)).
+  Definition lower_cfg (g : cfg) : dprog :=
+    mk_dprog
+      (lower_init_ptr g.(str_ptr).(ptr) ::
+                                    lower_init_str g.(str_ptr).(str))
+      (List.map lower_block g.(sig_blks).(blks)).
+  End WithGSig.
 
-Definition lower_atomic_value (v : value) : list dvalue :=
-  match v with
-  | VBool b => [ DVBool b ]
-  | VInt n => [ DVInt n ]
-  | VString s => [ DVString s ]
-  | _ => []
-  end.
+  Definition lower_atomic_value (v : value) : list dvalue :=
+    match v with
+    | VBool b => [ DVBool b ]
+    | VInt n => [ DVInt n ]
+    | VString s => [ DVString s ]
+    | _ => []
+    end.
 
-Fixpoint lower_value (v : value) : list (list dvalue) :=
-  match v with
-  | VBool _
-  | VInt _
-  | VString _ => [ lower_atomic_value v ]
-  | VRecord l => [ flat_map lower_atomic_value (map snd l) ]
-  | VList l | VSet l => flat_map lower_value l
-  end.
+  Fixpoint lower_value (v : value) : list (list dvalue) :=
+    match v with
+    | VBool _
+    | VInt _
+    | VString _ => [ lower_atomic_value v ]
+    | VRecord l => [ flat_map lower_atomic_value (map snd l) ]
+    | VList l | VSet l => flat_map lower_value l
+    end.
 
-Definition lower_str (str : list value) (f : fact) : Prop :=
-  exists x v vs', nth_error str x = Some v /\
-                    In vs' (lower_value v) /\
-                    f = normal_fact (glob_rel (mut_rel x)) vs'.
+  Definition lower_str (str : list value) (f : fact) : Prop :=
+    exists x v vs', nth_error str x = Some v /\
+                      In vs' (lower_value v) /\
+                      f = normal_fact (glob_rel (mut_rel x)) vs'.
 
-Definition lower_ptr (ptr : option nat) (f : fact) : Prop :=
-  match ptr with
-  | Some n => f = normal_fact (glob_rel (blk_rel n)) []
-  | None => f = normal_fact (glob_rel terminate_rel) []
-  end.
+  Definition lower_ptr (ptr : option nat) (f : fact) : Prop :=
+    match ptr with
+    | Some n => f = normal_fact (glob_rel (blk_rel n)) []
+    | None => f = normal_fact (glob_rel terminate_rel) []
+    end.
 
-Definition lower_state (g_d : cfg_dynamic) (f : fact) : Prop :=
-  lower_str g_d.(str) f \/
-    lower_ptr g_d.(ptr) f.
+  Definition lower_state (g_d : cfg_dynamic) (f : fact) : Prop :=
+    lower_str g_d.(str) f \/
+      lower_ptr g_d.(ptr) f.
 
-Definition lower_option_state (g_d : option cfg_dynamic) : fact -> Prop :=
-  match g_d with
-  | Some g_d => lower_state g_d
-  | None => fun _ => False
-  end.
+  Definition lower_option_state (g_d : option cfg_dynamic) : fact -> Prop :=
+    match g_d with
+    | Some g_d => lower_state g_d
+    | None => fun _ => False
+    end.
 
-Definition state_is_lowered_to (g_d : cfg_dynamic) (db : fact -> Prop) : Prop :=
-  forall f,
-    lower_state g_d f ->
-    db f.
+  Definition state_is_lowered_to (g_d : cfg_dynamic) (db : fact -> Prop) : Prop :=
+    forall f,
+      lower_state g_d f ->
+      db f.
 
-Definition db_subset (db1 db2 : fact -> Prop) : Prop :=
-  forall f,
-    db1 f -> db2 f.
-
-Section WithMap.
-  Context {context : map.map dvar dvalue} {context_ok : map.ok context}.
-  Context {tenv : map.map String.string type} {tenv_ok : map.ok tenv}.
-  Context {venv : map.map String.string value} {venv_ok : map.ok venv}.
+  Definition db_subset (db1 db2 : fact -> Prop) : Prop :=
+    forall f,
+      db1 f -> db2 f.
 
   Ltac invert_rules_impl :=
     lazymatch goal with
@@ -421,8 +574,8 @@ Section WithMap.
     rewrite !in_app_iff; intuition fail.
   Qed.
 
-  Lemma lower_expr'_not_meta : forall e r rls n,
-      lower_expr' r e = (rls, n) ->
+  Lemma lower_expr'_not_meta : forall g_sig e r rls n,
+      lower_expr' g_sig r e = (rls, n) ->
       flat_map meta_concl_rels rls = [].
   Proof.
     induction e; intros; cbn; invert_pair; auto.
@@ -433,7 +586,7 @@ Section WithMap.
       (forall f, lower_str g_str f -> db f) ->
       type_of_expr g_sig e t ->
       forall out rls n,
-        lower_expr' out e = (rls, n) ->
+        lower_expr' g_sig out e = (rls, n) ->
         Forall (fun vs' =>
                   prog_impl rls db (normal_fact (aux_rel out) vs'))
                     (lower_value (SrcLang.interp_expr g_str e)).
@@ -444,7 +597,7 @@ Section WithMap.
   Theorem lower_cfg_complete : forall (ts : nat) (g : cfg) (g_d : cfg_dynamic),
       cfg_steps g.(sig_blks) g.(str_ptr) ts = Some g_d ->
       well_typed_cfg g ->
-      state_is_lowered_to g_d (dprog_impl (lower_cfg g) ts).
+      state_is_lowered_to g_d (dprog_impl (lower_cfg g.(sig_blks).(sig) g) ts).
   Proof.
     induction ts; cbn; intros.
     1:{ do_injection; clear_refl.
@@ -615,8 +768,8 @@ Section WithMap.
         repeat case_match; intuition idtac. }
   Qed.
 
-  Lemma lower_expr'_in_lt_out : forall e n1 n2 rls,
-      lower_expr' n1 e = (rls, n2) ->
+  Lemma lower_expr'_in_lt_out : forall g_sig e n1 n2 rls,
+      lower_expr' g_sig n1 e = (rls, n2) ->
       n1 < n2.
   Proof.
     induction e; cbn; intros;
@@ -631,8 +784,8 @@ Section WithMap.
       intuition eauto using PeanoNat.Nat.le_trans, PeanoNat.Nat.le_succ_l, PeanoNat.Nat.lt_le_incl.
   Admitted.
 
-  Lemma lower_expr'_concl_namespace : forall e n1 n2 rls,
-      lower_expr' n1 e = (rls, n2) ->
+  Lemma lower_expr'_concl_namespace : forall g_sig e n1 n2 rls,
+      lower_expr' g_sig n1 e = (rls, n2) ->
       forall rl, In rl rls ->
                  match rl with
                  | normal_rule [ concl ] _ =>
@@ -650,8 +803,8 @@ Section WithMap.
               cbn; auto).
   Admitted.
 
-  Lemma lower_expr'_concl_singleton : forall e n1 n2 rls,
-      lower_expr' n1 e = (rls, n2) ->
+  Lemma lower_expr'_concl_singleton : forall g_sig e n1 n2 rls,
+      lower_expr' g_sig n1 e = (rls, n2) ->
       forall rl, In rl rls ->
                  match rl with
                  | normal_rule [concl] _ =>
@@ -669,8 +822,8 @@ Section WithMap.
               cbn; auto).
   Admitted.
 
-  Lemma lower_expr'_hyps_namespace : forall e n1 n2 rls,
-      lower_expr' n1 e = (rls, n2) ->
+  Lemma lower_expr'_hyps_namespace : forall g_sig e n1 n2 rls,
+      lower_expr' g_sig n1 e = (rls, n2) ->
       forall rl, In rl rls ->
                  match rl with
                  | normal_rule _ hyps =>
@@ -760,8 +913,8 @@ Section WithMap.
         apply PeanoNat.Nat.neq_succ_diag_r in H
     end; intuition fail.
 
-  Lemma lower_expr'_normal_rules: forall e rls r r',
-      lower_expr' r e = (rls, r') ->
+  Lemma lower_expr'_normal_rules: forall g_sig e rls r r',
+      lower_expr' g_sig r e = (rls, r') ->
       Forall
         (fun rl : rule =>
            match rl with
@@ -810,7 +963,7 @@ Section WithMap.
       db_subset db (lower_state {| str:=g_str; ptr:=g_ptr|}) ->
       type_of_expr g_sig e t ->
       forall out rls n f vs',
-        lower_expr' out e = (rls, n) ->
+        lower_expr' g_sig out e = (rls, n) ->
         f = normal_fact (aux_rel out) vs' ->
         prog_impl rls db f ->
         In vs' (lower_value (SrcLang.interp_expr g_str e)).
@@ -820,7 +973,7 @@ Section WithMap.
   Theorem lower_cfg_sound : forall (g : cfg) ts,
       well_typed_cfg g ->
       db_subset
-        (dprog_impl (lower_cfg g) ts)
+        (dprog_impl (lower_cfg g.(sig_blks).(sig) g) ts)
         (lower_option_state (cfg_steps g.(sig_blks) g.(str_ptr) ts)).
   Proof.
     unfold db_subset,lower_option_state, dprog_impl.
@@ -943,7 +1096,7 @@ Section WithMap.
           destruct_exists; intuition idtac.
           cbn in *. do_injection; clear_refl.
           lazymatch goal with
-            H: prog_impl (lower_expr ?e) _ _ |- _ =>
+            H: prog_impl (lower_expr _ ?e) _ _ |- _ =>
               eapply lower_expr_sound in H
           end; eauto using surjective_pairing.
           2:{ lazymatch goal with
