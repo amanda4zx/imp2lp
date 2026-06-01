@@ -1,4 +1,4 @@
-From imp2lp.withvar Require Import SrcLang Datalog Intermediate.
+From imp2lp.withvar Require Import SrcLang Datalog Intermediate InversionTactics.
 From imp2lp Require Import MyTactics Value.
 From Stdlib Require Import List String.
 From coqutil Require Import Map.Interface Tactics.case_match Result.
@@ -234,7 +234,7 @@ Section WithMap.
         let '(rls, out') := lower_expr' e_out e in
         let ps' := map lower_pexpr ps in
         let attrs := args_of_type (compute_type_of_expr e) in
-        let args := map (fun attr => var_expr (attr_var attr)) attrs in
+        let args := map (fun attr => var_expr (access_var x attr)) attrs in
         ([ mk_rule
              (mk_clause (aux_rel out) args)
              ([ mk_clause (aux_rel e_out) args ] ++
@@ -563,6 +563,12 @@ Definition lower_init_str' : nat -> list value -> list rule :=
         inversion H; subst; clear H
     | H: type_of_value _ TInt |- _ =>
         inversion H; subst; clear H
+    | H: type_of_value _ TString |- _ =>
+        inversion H; subst; clear H
+    | H: type_of_value _ (TRecord _) |- _ =>
+        inversion H; subst; clear H
+    | H: type_of_value _ (TSet _) |- _ =>
+        inversion H; subst; clear H
     end.
 
   Lemma prog_impl_comm : forall rls1 rls2 db f,
@@ -848,14 +854,14 @@ Definition lower_init_str' : nat -> list value -> list rule :=
 
   Ltac apply_lower_expr'_concl_namespace :=
     lazymatch goal with
-      E: lower_expr' _ _ = (?l, _),
+      E: lower_expr' _ _ _ = (?l, _),
         _: In _ ?l |- _ =>
         eapply lower_expr'_concl_namespace in E
     end.
 
   Ltac apply_lower_expr'_concl_namespace_fresh :=
     lazymatch goal with
-      E: lower_expr' _ _ = (?l, _),
+      E: lower_expr' _ _ _ = (?l, _),
         _: In _ ?l |- _ =>
         let H_ns := fresh "H_ns" in
         eapply lower_expr'_concl_namespace in E as H_ns
@@ -863,7 +869,7 @@ Definition lower_init_str' : nat -> list value -> list rule :=
 
   Ltac apply_lower_expr'_hyps_namespace :=
     lazymatch goal with
-      _: lower_expr' _ _ = (?l, _),
+      _: lower_expr' _ _ _ = (?l, _),
         H: In ?rl _ |- _ =>
         eapply lower_expr'_hyps_namespace in H
     end.
@@ -876,14 +882,14 @@ Definition lower_init_str' : nat -> list value -> list rule :=
 
   Ltac apply_lower_expr_sound_IH :=
     lazymatch goal with
-      IH: context[lower_expr' _ ?e = _ -> _],
+      IH: context[lower_expr' _ _ ?e = _ -> _],
         E: lower_expr' _ ?e = _ |- _ =>
         eapply IH in E; eauto
     end.
 
   Ltac apply_lower_expr'_in_lt_out :=
     lazymatch goal with
-      H: lower_expr' _ _ = _ |- _ =>
+      H: lower_expr' _ _ _ = _ |- _ =>
         apply lower_expr'_in_lt_out in H
     end.
 
@@ -926,36 +932,239 @@ Definition lower_init_str' : nat -> list value -> list rule :=
     induction e; cbn; intros; invert_pair; repeat constructor.
   Admitted.
 
-  Ltac invert_root_of_pftree :=
-    destruct_In;
-    [
-    | try rewrite in_app_iff in *;
-      intuition idtac;
-      apply_lower_expr'_concl_namespace; eauto;
-      repeat (destruct_match_hyp; intuition idtac); subst;
-      invert_rule_impl_non_meta;
-      repeat invert_Exists;
-      invert_interp_clause; intuition idtac;
-      invert_normal_fact;
-      rewrite_l_to_r;
-      do_injection; clear_refl;
-      try contra_S_le_self;
-      try
-        (apply_lower_expr'_in_lt_out; contra_S_lt_le_self) ];
+  Definition venv_context_wf (env : venv) (ctx : context) : Prop :=
+    forall x l,
+      map.get env x = Some (VRecord l) ->
+      forall attr v,
+        access_record l attr = Success v ->
+        match map.get ctx (access_var x attr) with
+        | Some v' => lower_atomic_value v = [v']
+        | None => False
+        end.
 
-    invert_rule_impl_non_meta;
-    repeat invert_Exists;
-    invert_interp_clause; intuition idtac; cbn in *;
-    invert_normal_fact;
+  Lemma venv_context_wf_empty : forall ctx,
+      venv_context_wf map.empty ctx.
+  Proof.
+    unfold venv_context_wf; intros.
+    rewrite map.get_empty in *.
+    discriminate.
+  Qed.
+
+  Lemma tenv_wf_empty : tenv_wf map.empty.
+  Proof.
+    unfold tenv_wf; intros;
+      rewrite map.get_empty in *; discriminate.
+  Qed.
+
+  Lemma venv_wf_empty : forall env,
+      venv_wf map.empty env.
+  Proof.
+    unfold venv_wf; intros;
+      rewrite map.get_empty in *; discriminate.
+  Qed.
+
+  Lemma lower_aexpr_hyps_mut : forall a a' hyps,
+      lower_aexpr a = (a', hyps) ->
+      Forall (fun hyp =>
+                match hyp.(clause_rel) with
+                | glob_rel (mut_rel _) => True
+                | _ => False
+                end) hyps.
+  Proof.
+    induction a; cbn; intros; repeat destruct_match_hyp; invert_pair; repeat constructor; auto.
+    all: repeat rewrite Forall_app; intuition idtac;
+      lazymatch goal with
+        _: lower_aexpr _ = (_, ?l),
+          IH: context[(_, ?l) = _ -> _] |-
+          Forall _ ?l =>
+          eapply IH
+      end; eauto.
+  Qed.
+
+  Ltac auto_invert :=
+    autorewrite with inversion in *;
+    intuition idtac; subst;
+    repeat destruct_exists;
+    try rewrite_asm;
+    try invert_normal_fact;
     repeat invert_Forall2;
-    repeat invert_interp_clause; intuition idtac; cbn in *;
-    subst;
-    repeat invert_Forall2; repeat invert_interp_dexpr; cbn in *;
-    repeat invert_Forall2; repeat invert_interp_dexpr; cbn in *;
     repeat invert_Forall;
-    repeat (destruct_match_hyp; try discriminate; subst);
-    do_injection; clear_refl;
-    rewrite_l_to_r; do_injection; clear_refl.
+    repeat invert_cons;
+    try rewrite_l_to_r;
+    try do_injection; repeat clear_refl;
+    try destruct_match_hyp;
+    try congruence;
+    cbn in *.
+
+  Lemma lower_atomic_typed_value : forall t v,
+      is_atomic_type t ->
+      type_of_value v t ->
+      match lower_value v with
+      | [[ _ ]] => True
+      | _ => False
+      end.
+  Proof.
+    destruct t; cbn; intuition idtac;
+      invert_type_of_value; trivial.
+  Qed.
+
+  Lemma lower_aexpr_sound : forall g_sig Genv a t,
+      type_of_aexpr g_sig Genv a t ->
+      forall g_str env ctx a' hyps v' hyps',
+        lower_aexpr a = (a', hyps) ->
+        Datalog.interp_expr ctx a' v' ->
+        Forall2 (interp_clause ctx) hyps hyps' ->
+        Forall (lower_str g_str) hyps' ->
+        sig_wf g_sig -> tenv_wf Genv ->
+        venv_context_wf env ctx ->
+        str_wf g_sig g_str ->
+        venv_wf Genv env ->
+        lower_value (interp_aexpr g_str env a) = [[ v' ]].
+  Proof.
+    induction 1; cbn; intros; repeat destruct_match_hyp; invert_pair.
+    1:{ lazymatch goal with
+        H: str_wf _ _ |- _ =>
+          eapply Forall2_nth_error_r in H
+      end; eauto.
+        unfold lower_str in *.
+        repeat auto_invert.
+        lazymatch goal with
+          H: type_of_value _ _ |- _ =>
+            apply lower_atomic_typed_value in H
+        end; auto.
+        repeat destruct_match_hyp; intuition idtac; subst.
+        repeat auto_invert. }
+    1:{ repeat auto_invert. }
+    4:{ repeat auto_invert.
+        lazymatch goal with
+          H: Forall2 _ (_ ++ _) _ |- _ =>
+            apply Forall2_app_inv_l in H
+        end.
+        repeat auto_invert.
+        rewrite Forall_app in *; intuition idtac.
+        repeat lazymatch goal with
+                 IH: context[str_wf _ _ -> _],
+                   H: str_wf _ _ |- _ =>
+                   let IH' := fresh "IH'" in
+                   eapply IH in H as IH'; eauto; clear IH
+               end.
+        repeat (lazymatch goal with
+                | H:type_of_aexpr _ _ _ _ |- _ =>
+                    eapply aexpr_type_sound in H
+                end; eauto).
+        repeat invert_type_of_value.
+        repeat lazymatch goal with
+               | H:?v = interp_aexpr _ _ _
+                 |- _ => rewrite <- H in *; clear H
+               end.
+        repeat auto_invert. }
+    7:{ lazymatch goal with
+        H: venv_wf _ _,
+          H': map.get Genv _ = _ |- _ =>
+          apply H in H'
+      end.
+        case_match; intuition idtac.
+        invert_type_of_value.
+        lazymatch goal with
+          H: Forall2 _ _ _ |- _ =>
+            eapply Forall2_access_record in H
+        end; eauto.
+        case_match; intuition idtac.
+        autorewrite with inversion in *.
+        lazymatch goal with
+          H: venv_context_wf _ _,
+            H': access_record _ _ = _ |- _ =>
+            eapply H in H'
+        end; eauto.
+        rewrite_l_to_r.
+        destruct a; try discriminate;
+          cbn in *; congruence. }
+  Admitted.
+
+  Lemma lower_pexpr_sound : forall g_sig Genv p,
+      well_typed_pexpr g_sig Genv p ->
+      forall p' hyps ctx v' hyps' g_str env,
+          lower_pexpr p = (p', hyps) ->
+          Datalog.interp_expr ctx p' v' ->
+          Forall2 (interp_clause ctx) hyps hyps' ->
+          Forall (lower_str g_str) hyps' ->
+          sig_wf g_sig ->
+          tenv_wf Genv ->
+          venv_context_wf env ctx ->
+          str_wf g_sig g_str ->
+          venv_wf Genv env ->
+          venv_context_wf env ctx ->
+          v' = DVBool (interp_pexpr g_str env p).
+  Proof.
+  Admitted.
+
+  Lemma type_of_aexpr_atomic : forall g_sig Genv a t,
+      type_of_aexpr g_sig Genv a t ->
+      is_atomic_type t.
+  Proof.
+    induction 1; auto; constructor.
+  Qed.
+
+  Ltac invert_type_of_rexpr :=
+    lazymatch goal with
+        H: type_of_rexpr _ _ _ _ |- _ =>
+          inversion H; subst
+      end.
+
+  Lemma type_of_expr_set : forall g_sig e t,
+      type_of_expr g_sig e (TSet t) ->
+      exists tl, t = TRecord tl.
+  Proof.
+    induction e; inversion 1; subst.
+    1:{ lazymatch goal with
+        H: type_of_aexpr _ _ _ _ |- _ =>
+          apply type_of_aexpr_atomic in H
+      end.
+        cbn in *; intuition idtac. }
+    1,2: eexists; eauto.
+    1:{ invert_type_of_rexpr.
+        eexists; eauto. }
+    1:{ lazymatch goal with
+        IH: context[type_of_expr _ ?e _ -> _],
+          H: type_of_expr _ ?e _ |- _ =>
+          apply IH in H
+      end.
+        destruct_exists; eexists; eauto. }
+    1,2: invert_type_of_rexpr;
+    eexists; eauto.
+  Qed.
+
+  Lemma interp_expr_unique : forall (ctx : context) e v1 v2,
+      interp_expr ctx e v1 ->
+      interp_expr ctx e v2 ->
+      v1 = v2.
+  Proof.
+    induction e; intros;
+      repeat auto_invert.
+    assert (x0 = x).
+    { clear H3 H4.
+      generalize dependent x0.
+      generalize dependent x.
+      induction args; repeat auto_invert.
+      f_equal; auto. }
+    subst. congruence.
+  Qed.
+
+  Lemma Forall2_interp_expr_unique : forall (ctx : context) es vs1 vs2,
+      Forall2 (interp_expr ctx) es vs1 ->
+      Forall2 (interp_expr ctx) es vs2 ->
+      vs1 = vs2.
+  Proof.
+    induction es; repeat auto_invert.
+    f_equal; eauto using interp_expr_unique.
+  Qed.
+
+  Ltac apply_db_subset :=
+    lazymatch goal with
+      H: db_subset ?db _,
+        H': ?db _|- _ =>
+        apply H in H'
+    end.
 
   Lemma lower_expr_sound : forall g_sig e t db g_str g_ptr,
       str_wf g_sig g_str ->
@@ -968,6 +1177,161 @@ Definition lower_init_str' : nat -> list value -> list rule :=
         prog_impl rls db f ->
         In vs' (lower_value (SrcLang.interp_expr g_str e)).
   Proof.
+    induction 4; cbn; intros.
+    1:{ (* EAtom *)
+      destruct_match_hyp; invert_pair.
+        lazymatch goal with
+          H: prog_impl _ _ _ |- _ =>
+            inversion H; subst
+        end;
+        [ (* db cannot prove auxiliary facts *)
+          apply_db_subset;
+          unfold lower_state, lower_str, lower_ptr in *;
+          repeat auto_invert | ].
+        unfold mk_rule in *.
+        repeat auto_invert.
+        erewrite lower_aexpr_sound; eauto using venv_context_wf_empty, tenv_wf_empty, venv_wf_empty.
+        1: left; reflexivity.
+        (* hyps are global and can only be proven by db *)
+        eapply lower_aexpr_hyps_mut in E.
+        lazymatch goal with
+          H: Forall2 _ _ _ |- _ =>
+            apply List.Forall2_forget_l in H
+          end.
+        rewrite Forall_forall; intros.
+        repeat apply_Forall_In.
+        destruct_exists; intuition idtac.
+        apply_Forall_In.
+        lazymatch goal with
+          c: clause |- _ =>
+            destruct c
+        end; cbn in *.
+        repeat case_match; intuition idtac.
+        repeat auto_invert.
+        lazymatch goal with
+          H: context[pftree] |- _ =>
+            inversion H; subst
+        end.
+        2: repeat auto_invert.
+        apply_db_subset.
+        unfold lower_state in *; intuition idtac.
+        unfold lower_ptr in *; case_match; congruence. }
+    4:{ (* EFilter *)
+      destruct_match_hyp; invert_pair.
+      (* invert root of pftree *)
+      lazymatch goal with
+        H: prog_impl _ _ _ |- _ =>
+          inversion H; subst
+      end;
+      [ (* db cannot prove auxiliary facts *)
+        apply_db_subset;
+        unfold lower_state, lower_str, lower_ptr in *;
+        repeat auto_invert | ].
+      invert_Exists.
+      2:{ (* root of pftree cannot come from the other rules *)
+        invert_Exists.
+          1:{ unfold mk_rule in *.
+              do 3 auto_invert.
+              exfalso; eapply n_Sn; eassumption. }
+          1:{ rewrite Exists_exists in *.
+              destruct_exists; intuition idtac.
+              apply_lower_expr'_concl_namespace; eauto.
+              repeat auto_invert.
+              rewrite PeanoNat.Nat.le_succ_l in *.
+              exfalso; eapply PeanoNat.Nat.nlt_succ_diag_l.
+              eassumption. } }
+      unfold mk_rule in *;
+        repeat auto_invert.
+      lazymatch goal with
+        H1: Forall2 ?ctx ?es _,
+          H2: Forall2 ?ctx ?es _ |- _ =>
+          pose proof Forall2_interp_expr_unique _ _ _ _ H1 H2
+      end; subst.
+
+      apply_prog_impl_cons_strengthen; cbn.
+      2-4: admit.
+      apply prog_impl_cons_strengthen in H9; cbn.
+      2-4: admit.
+
+      eapply IHtype_of_expr in H9; eauto.
+
+      lazymatch goal with
+        H: type_of_expr _ _ _ |- _ =>
+          apply type_of_expr_set in H as H_ty
+      end; destruct_exists; subst.
+      apply_expr_type_sound.
+      invert_type_of_value.
+      rewrite_expr_value.
+      cbn in *.
+      rewrite in_flat_map in *.
+      destruct_exists; intuition idtac.
+      apply_Forall_In.
+      invert_type_of_value.
+      cbn in *. intuition idtac.
+      subst.
+      eexists. rewrite filter_In.
+      intuition eauto.
+      2: cbn; auto.
+
+      rewrite forallb_forall; intros.
+      apply_Forall_In.
+      assert(HA: forall A B C D (P : C -> D -> Prop) f (g : A -> B) l1 l2,
+                Forall2 P (flat_map f (map g l1)) l2 ->
+                Forall (fun x => exists l3,
+                            incl l3 l2 /\
+                            Forall2 P (f (g x)) l3) l1).
+      { admit. }
+      apply HA in H12.
+      apply_Forall_In.
+      destruct_match_hyp.
+      destruct_exists; intuition idtac.
+      invert_Forall2.
+      repeat auto_invert.
+      (* show the pexpr evaluates to true *)
+      apply incl_cons_inv in H10.
+      intuition idtac.
+      lazymatch goal with
+        H: incl _ _ |- _ =>
+          eapply incl_Forall in H
+      end; eauto.
+      apply_Forall_In.
+      lazymatch goal with
+        H: pftree _ _ _ |- _ =>
+          inversion H; subst
+      end;
+      [ (* db cannot prove auxiliary facts *)
+        apply_db_subset;
+        unfold lower_state, lower_str, lower_ptr in *;
+        repeat auto_invert | ].
+      invert_Exists.
+      1:{ repeat auto_invert.
+          exfalso; eapply PeanoNat.Nat.neq_succ_diag_l;
+            eassumption. }
+      invert_Exists.
+      2:{ rewrite Exists_exists in *.
+          destruct_exists; intuition idtac.
+          apply_lower_expr'_concl_namespace; eauto.
+          repeat auto_invert.
+          exfalso; eapply PeanoNat.Nat.nle_succ_diag_l.
+          eassumption. }
+      repeat auto_invert.
+      eapply lower_pexpr_sound in E0; eauto.
+      1: do_injection; rewrite <- H10; reflexivity.
+
+      1:{ (* hyps are global and can only be proven by db *)
+        admit. }
+      all: admit. }
+
+
+      need type_of_expr ... (TSet _) -> ... (TSet (TRecord _)).
+      need interp_expr deterministic for x3 = x1.
+      need strengthening to use IH for x3
+
+
+      apply_expr_type_sound.
+      invert_type_of_value.
+      cbn. rewrite in_flat_map.
+      eexists. rewrite filter_In.
   Admitted.
 
   Theorem lower_cfg_sound : forall (g : cfg) ts,
