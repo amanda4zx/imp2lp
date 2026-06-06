@@ -3,6 +3,8 @@ Require Import coqutil.Word.Interface coqutil.Word.Properties coqutil.Datatypes.
 Require Import Std.Sorting.Mergesort.
 
 Section WithWord.
+  Unset Elimination Schemes.
+
   Inductive value :=
   | VInt (z : Z)
   | VBool (b : bool)
@@ -11,46 +13,48 @@ Section WithWord.
   | VRecord (l : list (string * value))
   | VSet (l : list value).
 
-  Section ValueIH.
+  Section ValueInd.
     Context (P : value -> Prop).
     Hypothesis (f_int : forall z : Z, P (VInt z)) (f_bool : forall b : bool, P (VBool b)) (f_string : forall s : string, P (VString s))
       (f_list : forall l : list value, Forall P l -> P (VList l))
       (f_record : forall l : list (string * value), Forall (fun v => P (snd v)) l -> P (VRecord l))
       (f_set : forall l : list value, Forall P l -> P (VSet l)).
     Section __.
-      Context (value_IH : forall v, P v).
-      Fixpoint list_value_IH (l : list value) : Forall P l :=
+      Context (value_ind : forall v, P v).
+      Fixpoint list_value_ind (l : list value) : Forall P l :=
         match l as l0 return Forall P l0 with
         | nil => Forall_nil P
-        | v :: l' => Forall_cons v (value_IH v) (list_value_IH l')
+        | v :: l' => Forall_cons v (value_ind v) (list_value_ind l')
         end.
-      Fixpoint record_value_IH (l : list (string * value)) : Forall (fun v => P (snd v)) l :=
+      Fixpoint record_value_ind (l : list (string * value)) : Forall (fun v => P (snd v)) l :=
         match l as l0 return Forall (fun v => P (snd v)) l0 with
         | nil => Forall_nil (fun v => P (snd v))
-        | v :: l' => Forall_cons v (value_IH (snd v)) (record_value_IH l')
+        | v :: l' => Forall_cons v (value_ind (snd v)) (record_value_ind l')
         end.
-      Fixpoint dict_value_IH (l : list (value * value)) : Forall (fun v => P (fst v) /\ P (snd v)) l :=
+      Fixpoint dict_value_ind (l : list (value * value)) : Forall (fun v => P (fst v) /\ P (snd v)) l :=
         match l as l0 return Forall (fun v => P (fst v) /\ P (snd v)) l0 with
         | nil => Forall_nil (fun v => P (fst v) /\ P (snd v))
-        | v :: l' => Forall_cons v (conj (value_IH (fst v)) (value_IH (snd v)))(dict_value_IH l')
+        | v :: l' => Forall_cons v (conj (value_ind (fst v)) (value_ind (snd v)))(dict_value_ind l')
         end.
-      Fixpoint bag_value_IH (l : list (value * nat)) : Forall (fun v => P (fst v)) l :=
+      Fixpoint bag_value_ind (l : list (value * nat)) : Forall (fun v => P (fst v)) l :=
         match l as l0 return Forall (fun v => P (fst v)) l0 with
         | nil => Forall_nil (fun v => P (fst v))
-        | v :: l' => Forall_cons v (value_IH (fst v)) (bag_value_IH l')
+        | v :: l' => Forall_cons v (value_ind (fst v)) (bag_value_ind l')
         end.
     End __.
 
-    Fixpoint value_IH (v : value) {struct v} : P v :=
+    Fixpoint value_ind (v : value) {struct v} : P v :=
       match v with
       | VInt z => f_int z
       | VBool b => f_bool b
       | VString s => f_string s
-      | VList l => f_list l (list_value_IH value_IH l)
-      | VRecord l => f_record l (record_value_IH value_IH l)
-      | VSet l => f_set l (list_value_IH value_IH l)
+      | VList l => f_list l (list_value_ind value_ind l)
+      | VRecord l => f_record l (record_value_ind value_ind l)
+      | VSet l => f_set l (list_value_ind value_ind l)
       end.
-  End ValueIH.
+  End ValueInd.
+
+  Set Elimination Schemes.
 
   Fixpoint access_record {A : Type} (l : list (string * A)) (s : string) : result A :=
     match l with
@@ -159,7 +163,7 @@ Section WithWord.
   Qed.
 
   Lemma value_compare_refl : forall v : value, value_compare v v = Eq.
-    induction v using value_IH; auto; intros; simpl.
+    induction v using value_ind; auto; intros; simpl.
     - apply Z.compare_refl.
     - destruct b; trivial.
     - apply string_compare_refl.
@@ -174,7 +178,7 @@ Section WithWord.
 
   Lemma value_compare_antisym : is_antisym value_compare.
   Proof.
-    intro u. apply (value_IH ((fun u => forall v, value_compare u v = CompOpp (value_compare v u))));
+    intro u. apply (value_ind ((fun u => forall v, value_compare u v = CompOpp (value_compare v u))));
       destruct v; auto; intros; simpl.
     - apply Z.compare_antisym.
     - destruct b, b0; auto.
@@ -250,7 +254,7 @@ Section WithWord.
 
   Lemma value_compare_Eq_eq : forall v v', value_compare v v' = Eq -> v = v'.
   Proof.
-    intros. generalize dependent v'. induction v using value_IH; intros;
+    intros. generalize dependent v'. induction v using value_ind; intros;
       destruct v'; simpl in *; try discriminate;
       repeat destruct_match; try discriminate; auto; f_equal.
       - apply Z.compare_eq; auto.
@@ -365,7 +369,7 @@ Section WithWord.
 
   Lemma value_compare_trans : forall v v' v'', value_compare v v' = Lt -> value_compare v' v'' = Lt ->
                                                value_compare v v'' = Lt.
-    induction v using value_IH.
+    induction v using value_ind.
     all: destruct v', v''; simpl in *; intros; try discriminate; auto.
     - eapply Zcompare_Lt_trans; eauto.
     - destruct b, b0, b1; try discriminate; auto.

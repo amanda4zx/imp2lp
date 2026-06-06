@@ -314,15 +314,13 @@ Section WithMap.
     | VList l | VSet l => flat_map lower_value_reified l
     end.
 
-  (* ??? remove
-Definition lower_init_str' : nat -> list value -> list rule :=
-  apply_with_idx'
-    (fun x v =>
-       map (fun vs' => mk_rule
-                         (mk_clause (mut_rel x) vs')
-                         [])
-         (lower_value_reified v)).
-   *)
+  Definition lower_init_str' : nat -> list value -> list rule :=
+    apply_with_idx'
+      (fun x v =>
+         map (fun vs' => mk_rule
+                           (mk_clause (mut_rel x) vs')
+                           [])
+           (lower_value_reified v)).
 
   Definition lower_init_str : list value -> list rule :=
     apply_with_idx
@@ -454,8 +452,20 @@ Definition lower_init_str' : nat -> list value -> list rule :=
                     Forall2 (interp_expr ctx) es' vs')
         (lower_value v).
   Proof.
-    destruct v; cbn; intros; cbn.
-  Admitted.
+    induction v; cbn; intros; cbn; repeat econstructor.
+    1,3: rewrite Forall_forall; intros;
+    rewrite in_flat_map in *;
+    destruct_exists; intuition idtac;
+    repeat apply_Forall_In;
+    destruct_exists; intuition idtac;
+    eexists; intuition eauto;
+    rewrite in_flat_map;
+    eexists; intuition eauto.
+    1:{ apply List.Forall2_flat_map.
+        induction l; cbn; constructor;
+          invert_Forall; auto.
+        destruct (snd a); cbn; repeat econstructor. }
+  Qed.
 
   Lemma flat_map_nil : forall A B (f : A -> list B) l,
       Forall (fun x => f x = []) l ->
@@ -585,7 +595,15 @@ Definition lower_init_str' : nat -> list value -> list rule :=
       flat_map meta_concl_rels rls = [].
   Proof.
     induction e; intros; cbn; invert_pair; auto.
-  Admitted.
+    all: repeat destruct_match_hyp; invert_pair; cbn; auto.
+    all: rewrite ?flat_map_app.
+    all: repeat lazymatch goal with
+             IH: context[lower_expr' _ _ ?e = _ -> _],
+               H: lower_expr' _ _ ?e = _ |- _ =>
+               apply IH in H
+           end; repeat rewrite_asm;
+      reflexivity.
+  Qed.
 
   Lemma lower_expr_complete : forall g_sig g_str db e t,
       str_wf g_sig g_str ->
@@ -631,6 +649,21 @@ Definition lower_init_str' : nat -> list value -> list rule :=
     destruct v; cbn.
   Admitted.
 
+  Ltac auto_invert :=
+    autorewrite with inversion in *;
+    intuition idtac; subst;
+    repeat destruct_exists;
+    try rewrite_asm;
+    try invert_normal_fact;
+    repeat invert_Forall2;
+    repeat invert_Forall;
+    repeat invert_cons;
+    try rewrite_l_to_r;
+    try do_injection; repeat clear_refl;
+    try destruct_match_hyp;
+    try congruence;
+    cbn in *.
+
   Lemma In_meta_rule__meta_concl_rels : forall concls hyps (rls : list rule),
       In (meta_rule concls hyps) rls ->
       flat_map meta_concl_rels rls <> [] \/ concls = [].
@@ -644,6 +677,32 @@ Definition lower_init_str' : nat -> list value -> list rule :=
     discriminate.
   Qed.
 
+  Lemma lower_init_str'_sound : forall rl str n env f hyps,
+      In rl (lower_init_str' n str) ->
+      rule_impl env rl f hyps ->
+      exists x v vs',
+        nth_error str x = Some v /\
+          In vs' (lower_value v) /\
+          f = normal_fact (glob_rel (mut_rel (n + x))) vs' /\
+          hyps = [].
+  Proof.
+    induction str; cbn; intuition idtac.
+    rewrite in_app_iff, in_map_iff in *; intuition idtac.
+    1:{ unfold mk_rule in *; subst.
+        repeat auto_invert.
+        eexists 0.
+        repeat eexists;
+          try rewrite PeanoNat.Nat.add_0_r;
+          eauto.
+        eapply interp_dexpr_reified_sound; eassumption. }
+    1:{ eapply IHstr in H1; eauto.
+        repeat destruct_exists; intuition idtac; subst.
+        repeat eexists.
+        3:{ erewrite PeanoNat.Nat.add_succ_comm.
+            reflexivity. }
+        all: eassumption. }
+  Qed.
+
   Lemma lower_init_sound : forall ptr str,
       db_subset
         (prog_impl
@@ -651,7 +710,18 @@ Definition lower_init_str' : nat -> list value -> list rule :=
            (fun _ : fact => False))
         (lower_state {| str := str; ptr := ptr |}).
   Proof.
-  Admitted.
+    unfold db_subset, lower_state, lower_str, lower_ptr; cbn; intros.
+    invert_rules_impl; intuition idtac.
+    rewrite Exists_exists in *.
+    destruct_exists; intuition idtac.
+    destruct_In.
+    1:{ unfold lower_init_ptr, mk_rule in *.
+        repeat auto_invert. }
+    1:{ eapply lower_init_str'_sound in H; eauto.
+        repeat destruct_exists;
+          left; repeat eexists;
+          intuition eauto. }
+  Qed.
 
   Ltac invert_prog_impl_by_db :=
     lazymatch goal with
@@ -981,21 +1051,6 @@ Definition lower_init_str' : nat -> list value -> list rule :=
       end; eauto.
   Qed.
 
-  Ltac auto_invert :=
-    autorewrite with inversion in *;
-    intuition idtac; subst;
-    repeat destruct_exists;
-    try rewrite_asm;
-    try invert_normal_fact;
-    repeat invert_Forall2;
-    repeat invert_Forall;
-    repeat invert_cons;
-    try rewrite_l_to_r;
-    try do_injection; repeat clear_refl;
-    try destruct_match_hyp;
-    try congruence;
-    cbn in *.
-
   Lemma lower_atomic_typed_value : forall t v,
       is_atomic_type t ->
       type_of_value v t ->
@@ -1159,6 +1214,27 @@ Definition lower_init_str' : nat -> list value -> list rule :=
     f_equal; eauto using interp_expr_unique.
   Qed.
 
+  Lemma Forall2_flat_map_map_l : forall A B C D (P : C -> D -> Prop) f (g : A -> B) l1 l2,
+      Forall2 P (flat_map f (map g l1)) l2 ->
+      Forall (fun x => exists l3,
+                  incl l3 l2 /\
+                    Forall2 P (f (g x)) l3) l1.
+  Proof.
+    induction l1; cbn; intros; constructor;
+      apply Forall2_app_inv_l in H;
+      repeat destruct_exists;
+      intuition idtac; subst.
+    1:{ eexists. intuition eauto.
+        apply incl_appl, incl_refl. }
+    1:{ apply IHl1 in H.
+        rewrite Forall_forall; intros.
+        apply_Forall_In.
+        destruct_exists; intuition idtac.
+        eexists; intuition eauto.
+        apply incl_appr. assumption. }
+  Qed.
+
+
   Ltac apply_db_subset :=
     lazymatch goal with
       H: db_subset ?db _,
@@ -1248,6 +1324,7 @@ Definition lower_init_str' : nat -> list value -> list rule :=
           pose proof Forall2_interp_expr_unique _ _ _ _ H1 H2
       end; subst.
 
+      (* strengthening to use IH *)
       apply_prog_impl_cons_strengthen; cbn.
       2-4: admit.
       apply prog_impl_cons_strengthen in H9; cbn.
@@ -1270,18 +1347,14 @@ Definition lower_init_str' : nat -> list value -> list rule :=
       cbn in *. intuition idtac.
       subst.
       eexists. rewrite filter_In.
-      intuition eauto.
-      2: cbn; auto.
+      intuition idtac; cbn; eauto.
 
       rewrite forallb_forall; intros.
       apply_Forall_In.
-      assert(HA: forall A B C D (P : C -> D -> Prop) f (g : A -> B) l1 l2,
-                Forall2 P (flat_map f (map g l1)) l2 ->
-                Forall (fun x => exists l3,
-                            incl l3 l2 /\
-                            Forall2 P (f (g x)) l3) l1).
-      { admit. }
-      apply HA in H12.
+      lazymatch goal with
+        H: Forall2 _ (flat_map _ _) _ |- _ =>
+          apply Forall2_flat_map_map_l  in H
+      end.
       apply_Forall_In.
       destruct_match_hyp.
       destruct_exists; intuition idtac.
@@ -1315,23 +1388,15 @@ Definition lower_init_str' : nat -> list value -> list rule :=
           exfalso; eapply PeanoNat.Nat.nle_succ_diag_l.
           eassumption. }
       repeat auto_invert.
-      eapply lower_pexpr_sound in E0; eauto.
-      1: do_injection; rewrite <- H10; reflexivity.
-
+      lazymatch goal with
+        H: lower_pexpr _ = _ |- _ =>
+          eapply lower_pexpr_sound in H
+          end; eauto.
+      1: do_injection; rewrite_asm; reflexivity.
       1:{ (* hyps are global and can only be proven by db *)
         admit. }
       all: admit. }
 
-
-      need type_of_expr ... (TSet _) -> ... (TSet (TRecord _)).
-      need interp_expr deterministic for x3 = x1.
-      need strengthening to use IH for x3
-
-
-      apply_expr_type_sound.
-      invert_type_of_value.
-      cbn. rewrite in_flat_map.
-      eexists. rewrite filter_In.
   Admitted.
 
   Theorem lower_cfg_sound : forall (g : cfg) ts,
