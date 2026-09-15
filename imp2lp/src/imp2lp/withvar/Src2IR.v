@@ -275,7 +275,8 @@ Section WithMap.
         let args := map (fun attr => var_expr (access_var x attr)) attrs in
         ([ mk_rule
              (mk_clause (aux_rel out) r')
-            ([ mk_clause (aux_rel e_out) args ] ++ hyps) ],
+            ([ mk_clause (aux_rel e_out) args ] ++ hyps) ] ++
+           rls,
         out')
     end.
 
@@ -867,25 +868,6 @@ Section WithMap.
                  | normal_rule [ concl ] _ =>
                      match concl.(clause_rel) with
                      | aux_rel n => n1 <= n /\ n < n2
-                     | _ => False
-                     end
-                 | _ => False
-                 end.
-  Proof.
-    induction e; cbn; intros.
-    all: try (invert_pair; intuition auto;
-              destruct_In; try apply_in_nil;
-              intuition idtac;
-              cbn; auto).
-  Admitted.
-
-  Lemma lower_expr'_concl_singleton : forall g_sig e n1 n2 rls,
-      lower_expr' g_sig n1 e = (rls, n2) ->
-      forall rl, In rl rls ->
-                 match rl with
-                 | normal_rule [concl] _ =>
-                     match clause_args concl with
-                     | [_] => True
                      | _ => False
                      end
                  | _ => False

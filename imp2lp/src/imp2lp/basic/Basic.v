@@ -1,4 +1,4 @@
-From Stdlib Require Import String ZArith List Bool Ascii.
+From Stdlib Require Import String ZArith List Bool Ascii Strings.BinaryString.
 Require Import imp2lp.Value. (* import for the record_sort function *)
 
 Import ListNotations.
@@ -234,8 +234,6 @@ Section WithMap.
     | s :: l => s ++ delim ++ concat_strings_with delim l
     end.
 
-  Require Import Coq.Strings.BinaryString.
-
   Fixpoint print_dexpr (e : dexpr) : string :=
     match e with
     | var_dexpr (DVar n) => "x_" ++ of_nat n
@@ -317,7 +315,7 @@ Section WithMap.
 
   Definition join_query := EJoin names_tbl ages_tbl "name_row" "age_row" [PEq (AAccess "name_row" "age")(AAccess "age_row" "id")]
                          (RRecord [("id", AAccess "name_row" "id"); ("name", AAccess "name_row" "name"); ("age", AAccess "age_row" "age")]).
-  Compute print_compiled_query (nat_rel 0) 1 join_query.
+  (* Compute print_compiled_query (nat_rel 0) 1 join_query. *)
 
 
 (*
@@ -332,5 +330,5 @@ Section WithMap.
                                   (EEmptySet [("id", TInt); ("is_female", TBool); ("name", TString)]))).
 
   Definition bool_query := EProj (EFilter persons_tbl "person" [PEq (AAccess "person" "is_female") (ABool false)]) "person" (RRecord [("id", AAccess "person" "id"); ("name", AAccess "person" "name")]).
-  Compute print_compiled_query (nat_rel 0) 1 bool_query.
+  (* Compute print_compiled_query (nat_rel 0) 1 bool_query. *)
 End WithMap.

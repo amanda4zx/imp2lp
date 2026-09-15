@@ -51,3 +51,7 @@ _CoqProject
 
 *.txt
 deps/datalog*
+
+*.DS_Store
+
+CLAUDE.md

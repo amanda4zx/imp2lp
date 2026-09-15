@@ -18,7 +18,7 @@ Definition interp_fun (f : fn) (l : list obj) : option obj :=
   match f, l with
   | fn_Not, [Bobj b] => Some (Bobj (negb b))
   | fn_And, [Bobj x; Bobj y] => Some (Bobj (x && y))
-  | fn_ZPlus, [Zobj x; Zobj y] => Some (Zobj (x + y))
+  | fn_Plus, [Zobj x; Zobj y] => Some (Zobj (x + y))
   | fn_StringConcat, [Sobj x; Sobj y]=> Some (Sobj (x ++ y))
   | fn_StringLength, [Sobj x] => Some (Zobj (Z.of_nat (String.length x)))
   | fn_BLit b, [] => Some (Bobj b)
@@ -1502,6 +1502,7 @@ repeat (destruct_match_hyp; try now intuition idtac).
     end.
 
   Inductive rel_dep_on (prog : list rule) : rel -> rel -> Prop :=
+  | rel_dep_on_refl r : rel_dep_on prog r r
   | rel_dep_on_base rl hyp : In rl prog ->
                              In hyp rl.(rule_body) ->
                              rel_dep_on prog rl.(rule_head).(fact_R) hyp.(fact_R)
@@ -1588,6 +1589,7 @@ repeat (destruct_match_hyp; try now intuition idtac).
       rel_dep_on (rls ++ rls') r1 r2 -> rel_dep_on (rls' ++ rls) r1 r2.
   Proof.
     induction 1.
+    1: constructor.
     1:{ constructor; auto.
         rewrite in_app_iff in *; intuition idtac. }
     1:{ econstructor; eauto. }
@@ -1866,6 +1868,7 @@ repeat (destruct_match_hyp; try now intuition idtac).
   Proof.
     intros. intro contra.
     induction contra.
+    1: contradiction.
     1:{ rewrite in_app_iff in *.
         intuition idtac; apply_Forall_In.
         unfold rule_le_lt, Forall_body in *;
@@ -1906,11 +1909,13 @@ repeat (destruct_match_hyp; try now intuition idtac).
 
   Lemma rel_dep_on_In : forall prog r r',
       rel_dep_on prog r r' ->
+      r = r' \/
       exists rl hyp, In rl prog /\ In hyp rl.(rule_body) /\
                        rl.(rule_head).(fact_R) = r.
   Proof.
     induction 1; auto.
-    repeat eexists; eauto.
+    - right; repeat eexists; eauto.
+    - destruct IHrel_dep_on1 as [<- | ?]; auto.
   Qed.
 
   Ltac apply_rel_lt_nge :=
@@ -1936,6 +1941,13 @@ repeat (destruct_match_hyp; try now intuition idtac).
   Proof.
     intros. intro contra.
     induction contra.
+    1:{ unfold rel_le_lt in *.
+        destruct H2 as [Hlb_r Hr_ub], H3 as [Hlb'_r Hr_ub'].
+        destruct H1 as [Hle | Hle].
+        - apply (rel_lt_nge r ub Hr_ub).
+          eapply rel_le_trans; eassumption.
+        - apply (rel_lt_nge r ub' Hr_ub').
+          eapply rel_le_trans; eassumption. }
     1:{ unfold rule_le_lt in *.
         rewrite in_app_iff in *.
         intuition idtac; apply_Forall_In;
@@ -1957,6 +1969,8 @@ repeat (destruct_match_hyp; try now intuition idtac).
                    | ]; clear H
                end. apply_rel_lt_nge. }
     1:{ eapply rel_dep_on_In in contra2.
+        destruct contra2 as [<- | contra2].
+        1: exact (IHcontra1 H2 H3).
         repeat destruct_exists.
         repeat destruct_and; subst.
         rewrite in_app_iff in *.
