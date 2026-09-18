@@ -16,7 +16,7 @@ ABS_ROOT_DIR:=$(shell cygpath -m '$(ABS_ROOT_DIR)' 2>/dev/null || echo '$(ABS_RO
 COQUTIL_DIR ?= $(ABS_ROOT_DIR)/deps/coqutil/
 export COQUTIL_DIR
 SORTING_DIR ?= $(ABS_ROOT_DIR)/deps/coq-stdlib-edits/
-# DATALOG_DIR ?= $(ABS_ROOT_DIR)/deps/datalog/
+DATALOG_DIR ?= $(ABS_ROOT_DIR)/deps/datalog/
 
 coqutil:
 	$(MAKE) -C $(COQUTIL_DIR)
@@ -33,8 +33,8 @@ sorting:
 clean_sorting:
 	$(MAKE) -C $(SORTING_DIR) clean
 
-# datalog:
-#	$(MAKE) -C $(DATALOG_DIR)
+datalog:
+	dune build --root $(DATALOG_DIR)
 
 # clean_datalog:
 #	$(MAKE) -C $(DATALOG_DIR) clean

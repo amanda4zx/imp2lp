@@ -50,7 +50,6 @@ time-of-build-pretty.log
 _CoqProject
 
 *.txt
-deps/datalog*
 
 *.DS_Store
 
