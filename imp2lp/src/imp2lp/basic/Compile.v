@@ -920,7 +920,7 @@ Section WithMaps.
         do_injection. constructor.
         1: rewrite map.get_put_same; reflexivity.
         1:{ eapply List.Forall2_impl_strong.
-            2: eauto.
+            1: eauto.
             cbn; intros.
             assert(x <> a).
             { intro contra. subst. intuition fail. }
@@ -978,7 +978,7 @@ Section WithMaps.
         invert_NoDup.
         do_injection. constructor; auto.
         2:{ eapply List.Forall2_impl_strong.
-            2: eauto.
+            1: eauto.
             cbn; intros.
             rewrite in_map_iff in *.
             destruct_exists; intuition idtac; subst.

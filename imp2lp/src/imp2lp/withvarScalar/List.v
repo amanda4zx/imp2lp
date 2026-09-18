@@ -679,7 +679,7 @@ Lemma invert_concat_same' xss xss' n :
   xss = xss'.
 Proof.
   intros H H0 H1 H2. apply invert_concat_same; auto.
-  eapply Forall2_impl_strong; [|apply Forall2_true; auto].
+  eapply Forall2_impl_strong; [apply Forall2_true; auto|].
   intros x y _ Hx Hy. rewrite Forall_forall in *. rewrite H1, H2; auto.
 Qed.
 

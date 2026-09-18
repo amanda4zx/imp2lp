@@ -11,9 +11,10 @@ VFILES:=$(shell find $(SRCDIR) -type f -name '*.v')
 DEPS_DIR?=../deps
 
 # Note: make does not interpret "\n", and this is intended
-DEPFLAGS_COQUTIL_NL:=-Q $(DEPS_DIR)/coqutil/src/coqutil coqutil\n
+DATALOG_DIR:=$(DEPS_DIR)/datalog/_build/default
+DEPFLAGS_COQUTIL_NL:=-Q $(DATALOG_DIR)/graph_search/coqutil/src/coqutil coqutil\n
+DEPFLAGS_DATALOG_NL:=-Q $(DATALOG_DIR)/src/datalog Datalog\n-Q $(DATALOG_DIR)/src/util Datalog.Util\n-Q $(DATALOG_DIR)/graph_search/src GraphSearch\n
 DEPFLAGS_SORTING_NL:=-Q $(DEPS_DIR)/coq-stdlib-edits/src/Std Std\n
-# DEPFLAGS_DATALOG_NL:=-Q $(DEPS_DIR)/datalog/src Datalog\n
 # DEPFLAGS_ATL_NL:=-Q $(DEPS_DIR)/datalog/verified-scheduling/src/verified_scheduling/atl/ ATL\n
 # DEPFLAGS_LOWER_NL:=-Q $(DEPS_DIR)/datalog/verified-scheduling/src/verified_lowering/proof Lower\n
 DEPFLAGS_NL:=
@@ -23,8 +24,9 @@ EXTERNAL_DEPENDENCIES?=
 EXTERNAL_COQUTIL?=
 
 ifneq ($(EXTERNAL_COQUTIL),1)
-DEPFLAGS_NL:=$(DEPFLAGS_NL)$(DEPFLAGS_COQUTIL_NL)$(DEPFLAGS_SORTING_NL)# $(DEPFLAGS_DATALOG_NL)$(DEPFLAGS_ATL_NL)$(DEPFLAGS_LOWER_NL)
+DEPFLAGS_NL:=$(DEPFLAGS_NL)$(DEPFLAGS_COQUTIL_NL)$(DEPFLAGS_SORTING_NL)$(DEPFLAGS_DATALOG_NL)# $(DEPFLAGS_ATL_NL)$(DEPFLAGS_LOWER_NL)
 endif
+
 
 # If we get our dependencies externally, then we should not bind the local versions of things
 ifneq ($(EXTERNAL_DEPENDENCIES),1)
@@ -33,7 +35,7 @@ else
 ALLDEPFLAGS_NL=$(CURFLAGS_NL)
 endif
 
-_CoqProject:
+_CoqProject: Makefile
 	printf -- '$(ALLDEPFLAGS_NL)' > _CoqProject
 
 all: Makefile.coq $(VFILES)

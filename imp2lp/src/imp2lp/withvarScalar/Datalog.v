@@ -528,7 +528,7 @@ Section __.
     intros Hext H. revert s s' Hext v H. induction e; intros s s' Hext v0 Hv0.
     - invert Hv0. constructor. auto. (*idk how it knows to unfold map.extends*)
     - invert Hv0. econstructor; eauto.
-      eapply Forall2_impl_strong; [|eassumption]. intros. rewrite Forall_forall in H.
+      eapply Forall2_impl_strong; [eassumption|]. intros. rewrite Forall_forall in H.
       eauto.
   Qed.
 
@@ -574,7 +574,7 @@ Section __.
   Proof.
     cbv [interp_clause]. intros Hinterp Hagree. fwd.
     eexists. split; [|auto].
-    eapply Forall2_impl_strong; [|eassumption].
+    eapply Forall2_impl_strong; [eassumption|].
     intros. cbv [vars_of_clause] in Hagree.
     rewrite Forall_flat_map, Forall_forall in Hagree.
     eauto using interp_expr_agree_on.
