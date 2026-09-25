@@ -103,12 +103,6 @@ Definition is_atomic_type (t : type) : Prop :=
   | _ => False
   end.
 
-Definition is_atomic_type_com (t : type) : bool :=
-  match t with
-  | TInt | TBool | TString => true
-  | _ => false
-  end.
-
 Inductive type_wf : type -> Prop :=
 | WFTInt : type_wf TInt
 | WFTBool : type_wf TBool

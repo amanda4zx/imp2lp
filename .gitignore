@@ -45,6 +45,7 @@ time-of-build-both.log
 time-of-build-pretty.log
 
 *~
+\#*\#
 *.coq
 *.coq.conf
 _CoqProject
@@ -53,4 +54,6 @@ _CoqProject
 
 *.DS_Store
 
-CLAUDE.md
+*.md
+
+research_notes/
